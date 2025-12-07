@@ -1,92 +1,29 @@
 //! # Planet module
-//! This module provides common definitions for planets and their associated types
-//! that need be used by a group to construct its own planet.
-//! The [Planet] struct is the **main component**: an instance of it represents the
-//! actual planet and contains all the logic and state (see [PlanetState]) needed to work as one, in fact
-//! this is what the orchestrator will interact with.
 //!
-//! You can instantiate a new planet by calling the [Planet::new] constructor method and passing
-//! valid construction parameters to it (look into its documentation to learn more).
+//! This module provides the common definitions for planets and their associated types
+//! that groups need to implement their own planet behavior.
 //!
-//! One of the construction parameters is a group-defined struct that implements the [PlanetAI] trait,
-//! which defines several methods for handling messages coming from the orchestrator and the explorers. This is
-//! the core of each group's planet implementation, as it defines the planet *behaviour*, that is
-//! how a planet "reacts" to the possible events or requests.
+//! The main type is [Planet], which represents an actual planet and contains all the
+//! logic and state ([PlanetState]) necessary to run as a planet. The orchestrator
+//! interacts with instances of [Planet] through the channels provided at construction.
 //!
-//! ## Examples
-//! Intended usage (for planet definition, by groups):
+//! Groups provide a struct implementing [PlanetAI] to define the planet behavior.
+//! The AI receives messages from the orchestrator and explorers and can mutate the
+//! planet state. See [PlanetAI] for handler semantics.
 //!
-//! ```
-//! use crossbeam_channel::{Sender, Receiver};
-//! use common_game::components::planet::{Planet, PlanetAI, PlanetState, PlanetType};
-//! use common_game::components::resource::{Combinator, Generator};
-//! use common_game::components::rocket::Rocket;
-//! use common_game::protocols::messages;
+//! NOTE: Planet type constraints follow the project specification (see PDF, section 3.7.2).
+//! The table in the specification is reproduced here for clarity:
 //!
-//! // Group-defined AI struct
-//! struct AI { /* your AI state here */ };
+//! 3.7.2 Planet Types
 //!
-//! impl PlanetAI for AI {
-//!     fn handle_orchestrator_msg(
-//!         &mut self,
-//!         state: &mut PlanetState,
-//!         generator: &Generator,
-//!         combinator: &Combinator,
-//!         msg: messages::OrchestratorToPlanet
-//!     ) -> Option<messages::PlanetToOrchestrator> {
-//!         // your handler code here...
-//!         None
-//!     }
+//! Type | Energy Cells | Generation Recipes | Rockets | Combination Recipes
+//! -----|--------------|--------------------|---------|---------------------
+//! A    | 5 cells      | At most 1 type     | Allowed | None
+//! B    | 1 cell       | Unlimited types    | Not allowed | 1 type
+//! C    | 1 cell       | At most 1 type     | Allowed | All 6 types
+//! D    | 5 cells      | Unlimited types    | Not allowed | None
 //!
-//!     fn handle_explorer_msg(
-//!         &mut self,
-//!         state: &mut PlanetState,
-//!         generator: &Generator,
-//!         combinator: &Combinator,
-//!         msg: messages::ExplorerToPlanet
-//!     ) -> Option<messages::PlanetToExplorer> {
-//!         // your handler code here...
-//!         None
-//!     }
-//!
-//!     fn handle_asteroid(
-//!         &mut self,
-//!         state: &mut PlanetState,
-//!         generator: &Generator,
-//!         combinator: &Combinator,
-//!     ) -> Option<Rocket> {
-//!         // your handler code here...
-//!         None
-//!     }
-//!
-//!     fn start(&mut self, state: &PlanetState) { /* startup code */ }
-//!     fn stop(&mut self, state: &PlanetState) { /* stop code */ }
-//! }
-//!
-//! // This is the group's "export" function. It will be called by
-//! // the orchestrator to spawn your planet.
-//! pub fn create_planet(
-//!     rx_orchestrator: Receiver<messages::OrchestratorToPlanet>,
-//!     tx_orchestrator: Sender<messages::PlanetToOrchestrator>,
-//!     rx_explorer: Receiver<messages::ExplorerToPlanet>,
-//! ) -> Planet {
-//!     let id = 1;
-//!     let ai = AI {};
-//!     let gen_rules = vec![/* your recipes */];
-//!     let comb_rules = vec![/* your recipes */];
-//!
-//!     // Construct the planet and return it
-//!     Planet::new(
-//!         id,
-//!         PlanetType::A,
-//!         Box::new(ai),
-//!         gen_rules,
-//!         comb_rules,
-//!         (rx_orchestrator, tx_orchestrator),
-//!         rx_explorer,
-//!     ).unwrap() // Don't call .unwrap()! You should do error checking instead.
-//! }
-//! ```
+//! The implementation below encodes these constraints in PlanetType::constraints().
 
 use crate::components::energy_cell::EnergyCell;
 use crate::components::resource::{BasicResourceType, Combinator, ComplexResourceType, Generator};
@@ -95,7 +32,7 @@ use crate::components::sunray::Sunray;
 use crate::protocols::messages::{
     ExplorerToPlanet, OrchestratorToPlanet, PlanetToExplorer, PlanetToOrchestrator,
 };
-use crossbeam_channel::{Receiver, Sender, select_biased};
+use crossbeam_channel::{select_biased, Receiver, Sender};
 use std::collections::HashMap;
 use std::slice::{Iter, IterMut};
 
@@ -110,16 +47,15 @@ use std::slice::{Iter, IterMut};
 /// A response can be sent by returning an optional message of the correct type,
 /// that will be forwarded to the associated channel passed on planet construction.
 pub trait PlanetAI: Send {
-    /// Handler for messages received by the orchestrator (receiving
-    /// end of the [OrchestratorToPlanet] channel).
-    /// The following messages will **not** invoke this handler:
-    /// - [OrchestratorToPlanet::StartPlanetAI] (see [PlanetAI::start])
-    /// - [OrchestratorToPlanet::StopPlanetAI] (see [PlanetAI::stop])
-    /// - [OrchestratorToPlanet::Asteroid] (see [PlanetAI::handle_asteroid])
-    /// - [OrchestratorToPlanet::IncomingExplorerRequest], as this will be handled automatically by the planet
-    /// - [OrchestratorToPlanet::OutgoingExplorerRequest] (same as previous one)
+    /// Handler for messages received from the orchestrator (receiver end of the [OrchestratorToPlanet] channel).
     ///
-    /// Check [PlanetAI] docs for general meaning of the parameters and return type.
+    /// The following orchestrator messages are handled specially by the planet core and
+    /// will not be dispatched to this handler:
+    /// - [OrchestratorToPlanet::StartPlanetAI] (handled by [PlanetAI::start])
+    /// - [OrchestratorToPlanet::StopPlanetAI] (handled by [PlanetAI::stop])
+    /// - [OrchestratorToPlanet::Asteroid] (handled by [PlanetAI::handle_asteroid])
+    /// - [OrchestratorToPlanet::IncomingExplorerRequest] (handled directly by Planet)
+    /// - [OrchestratorToPlanet::OutgoingExplorerRequest] (handled directly by Planet)
     fn handle_orchestrator_msg(
         &mut self,
         state: &mut PlanetState,
@@ -128,10 +64,7 @@ pub trait PlanetAI: Send {
         msg: OrchestratorToPlanet,
     ) -> Option<PlanetToOrchestrator>;
 
-    /// Handler for **all** messages received by an explorer (receiving
-    /// end of the [ExplorerToPlanet] channel).
-    ///
-    /// Check [PlanetAI] docs for general meaning of the parameters and return type.
+    /// Handler for all messages received from explorers (receiver end of the [ExplorerToPlanet] channel).
     fn handle_explorer_msg(
         &mut self,
         state: &mut PlanetState,
@@ -140,13 +73,10 @@ pub trait PlanetAI: Send {
         msg: ExplorerToPlanet,
     ) -> Option<PlanetToExplorer>;
 
-    /// This handler will be invoked when a [OrchestratorToPlanet::Asteroid]
-    /// message is received. It's important to handle *Asteroid* messages
-    /// correctly, as this will the determine the planet survival.
+    /// Handler invoked when an asteroid hits the planet (OrchestratorToPlanet::Asteroid).
     ///
-    /// # Returns
-    /// In order to survive, an owned [Rocket] **must** be returned from this method;
-    /// if `None` is returned instead, the planet will (or *should*) be **destroyed** by the orchestrator
+    /// To survive, the AI must return Some(Rocket). Returning None indicates the planet
+    /// failed to defend itself and will be considered destroyed by the orchestrator.
     fn handle_asteroid(
         &mut self,
         state: &mut PlanetState,
@@ -154,16 +84,10 @@ pub trait PlanetAI: Send {
         combinator: &Combinator,
     ) -> Option<Rocket>;
 
-    /// This method will be invoked when a [OrchestratorToPlanet::StartPlanetAI]
-    /// is received, but **only if** the planet is currently in a *stopped* state.
-    ///
-    /// Start messages received when planet is already running are **ignored**.
+    /// Called when a StartPlanetAI message is received and the planet is currently stopped.
     fn start(&mut self, state: &PlanetState);
 
-    /// This method will be invoked when a [OrchestratorToPlanet::StopPlanetAI]
-    /// is received, but **only if** the planet is currently in a *running* state.
-    ///
-    /// Stop messages received when planet is already stopped are **ignored**.
+    /// Called when a StopPlanetAI message is received and the planet is currently running.
     fn stop(&mut self, state: &PlanetState);
 }
 
@@ -175,9 +99,8 @@ pub struct PlanetConstraints {
     n_comb_rules: usize,
 }
 
-/// Planet types definitions, intended to be passed
-/// to the planet constructor. Identifies the planet rules constraints,
-/// with each type having its own.
+/// Planet types definitions, intended to be passed to the planet constructor.
+/// Identifies the planet rules constraints, with each type having its own.
 #[derive(Debug, Clone, Copy)]
 pub enum PlanetType {
     A,
@@ -190,31 +113,31 @@ impl PlanetType {
     const N_ENERGY_CELLS: usize = 5;
     const N_RESOURCE_COMB_RULES: usize = 6;
 
-    /// Returns a tuple with the constraints associated to the planet type,
-    /// as described in the project specifications.
+    /// Returns a PlanetConstraints struct with the constraints associated to this planet type,
+    /// as specified in the project requirements (see PDF section 3.7.2).
     pub fn constraints(&self) -> PlanetConstraints {
         match self {
             PlanetType::A => PlanetConstraints {
                 n_energy_cells: Self::N_ENERGY_CELLS,
-                unbounded_gen_rules: false,
+                unbounded_gen_rules: false, // at most 1 generation recipe
                 can_have_rocket: true,
                 n_comb_rules: 0,
             },
             PlanetType::B => PlanetConstraints {
                 n_energy_cells: 1,
-                unbounded_gen_rules: true,
+                unbounded_gen_rules: true, // unlimited generation recipes
                 can_have_rocket: false,
                 n_comb_rules: 1,
             },
             PlanetType::C => PlanetConstraints {
                 n_energy_cells: 1,
-                unbounded_gen_rules: false,
+                unbounded_gen_rules: false, // at most 1 generation recipe
                 can_have_rocket: true,
-                n_comb_rules: Self::N_RESOURCE_COMB_RULES,
+                n_comb_rules: Self::N_RESOURCE_COMB_RULES, // all 6 combination recipes
             },
             PlanetType::D => PlanetConstraints {
                 n_energy_cells: Self::N_ENERGY_CELLS,
-                unbounded_gen_rules: true,
+                unbounded_gen_rules: true, // unlimited generation recipes
                 can_have_rocket: false,
                 n_comb_rules: 0,
             },
@@ -222,13 +145,8 @@ impl PlanetType {
     }
 }
 
-/// This struct is a representation of the internal state
-/// of the planet. Through its public methods, it gives access to the all resources
-/// of the planet:
-/// - A vec of [EnergyCell].
-/// - An optional [Rocket], that can be built accordingly to the planet type.
-/// - [Generator] for generating basic resources.
-/// - [Combinator] for combining basic resources into complex ones.
+/// Representation of the planet's internal state.
+/// Provides access to energy cells, an optional rocket, and flags coming from the planet type.
 pub struct PlanetState {
     id: u32,
     energy_cells: Vec<EnergyCell>,
@@ -242,49 +160,39 @@ impl PlanetState {
         self.id
     }
 
-    /// Indexed getter accessor for the [EnergyCell] vec.
-    ///
-    /// # Returns
-    /// An immutable borrow of the *i-th* energy cell.
+    /// Indexed getter for an immutable reference to the i-th energy cell.
     ///
     /// # Panics
-    /// This method will panic if the index `i` is out of bounds.
-    /// Always check the number of energy cells available with [PlanetState::cells_count].
+    /// Panics if i is out of bounds. Use [PlanetState::cells_count] beforehand.
     pub fn cell(&self, i: usize) -> &EnergyCell {
         &self.energy_cells[i]
     }
 
-    /// Indexed *mutable* getter accessor for the [EnergyCell] vec.
-    ///
-    /// # Returns
-    /// An mutable borrow of the *i-th* energy cell.
+    /// Indexed getter for a mutable reference to the i-th energy cell.
     ///
     /// # Panics
-    /// This method will panic if the index `i` is out of bounds.
-    /// Always check the number of energy cells available with [PlanetState::cells_count].
+    /// Panics if i is out of bounds. Use [PlanetState::cells_count] beforehand.
     pub fn cell_mut(&mut self, i: usize) -> &mut EnergyCell {
         &mut self.energy_cells[i]
     }
 
-    /// Returns the number of energy cells owned by
-    /// the planet. This is the actual size of the internal
-    /// vec containing the cells.
+    /// Returns the number of energy cells the planet owns.
     pub fn cells_count(&self) -> usize {
         self.energy_cells.len()
     }
 
-    /// Returns an *immutable* iterator over the energy cells owned by the planet.
+    /// Returns an immutable iterator over the energy cells.
     pub fn cells_iter(&self) -> Iter<'_, EnergyCell> {
         self.energy_cells.iter()
     }
 
-    /// Returns a *mutable* iterator over the energy cells owned by the planet.
+    /// Returns a mutable iterator over the energy cells.
     pub fn cells_iter_mut(&mut self) -> IterMut<'_, EnergyCell> {
         self.energy_cells.iter_mut()
     }
 
     /// Charges the first empty (discharged) cell.
-    /// Returns an optional [Sunray] if there's no cell to charge.
+    /// Returns Some(sunray) if there is no empty cell (sunray not consumed).
     pub fn charge_cell(&mut self, sunray: Sunray) -> Option<Sunray> {
         match self.empty_cell() {
             None => Some(sunray),
@@ -295,48 +203,43 @@ impl PlanetState {
         }
     }
 
-    /// Returns a tuple containing a *mutable* borrow of the first empty (discharged) cell
-    /// and its index, or `None` if there isn't any.
+    /// Returns a mutable borrow to the first empty (discharged) cell and its index, or None.
     pub fn empty_cell(&mut self) -> Option<(&mut EnergyCell, usize)> {
         let idx = self.energy_cells.iter().position(|cell| !cell.is_charged());
         idx.map(|i| (&mut self.energy_cells[i], i))
     }
 
-    /// Returns a tuple containing a *mutable* borrow of the first full (charged) cell
-    /// and its index, or `None` if there isn't any.
+    /// Returns a mutable borrow to the first full (charged) cell and its index, or None.
     pub fn full_cell(&mut self) -> Option<(&mut EnergyCell, usize)> {
         let idx = self.energy_cells.iter().position(|cell| cell.is_charged());
         idx.map(|i| (&mut self.energy_cells[i], i))
     }
 
-    /// Returns `true` if the planet can have a rocket.
+    /// Returns true if the planet can have a rocket (based on its type).
     pub fn can_have_rocket(&self) -> bool {
         self.can_have_rocket
     }
 
-    /// Returns `true` if the planet has a rocket built and ready to launch.
+    /// Returns true if the planet currently has a rocket stored and ready.
     pub fn has_rocket(&self) -> bool {
         self.rocket.is_some()
     }
 
-    /// Takes the rocket out of the planet state (if there is one), leaving
-    /// `None` in its place.
+    /// Takes ownership of the rocket if present, leaving the planet without one.
     pub fn take_rocket(&mut self) -> Option<Rocket> {
         self.rocket.take()
     }
 
-    /// Constructs a rocket using the *i-th* [EnergyCell] of the planet and stores it
-    /// inside the planet, taking ownership of it.
+    /// Builds a rocket consuming the i-th energy cell (must be charged) and stores it in the planet.
     ///
     /// # Panics
-    /// This method will panic if the index `i` is out of bounds.
-    /// Always check the number of energy cells available with [PlanetState::cells_count].
+    /// Panics if i is out of bounds. Use [PlanetState::cells_count] beforehand.
     ///
     /// # Errors
-    /// Returns an error if:
-    /// - The planet type prohibits the storing of rockets.
-    /// - The planet already has a rocket built.
-    /// - The energy cell is not charged
+    /// Errors if:
+    /// - Planet type doesn't support rockets.
+    /// - Planet already has a rocket.
+    /// - The energy cell at index i is not charged.
     pub fn build_rocket(&mut self, i: usize) -> Result<(), String> {
         if !self.can_have_rocket {
             Err("This planet type can't have rockets.".to_string())
@@ -350,7 +253,7 @@ impl PlanetState {
         }
     }
 
-    /// Returns a *dummy* clone of this state.
+    /// Returns a simplified clone of the planet state for external introspection.
     pub fn to_dummy(&self) -> DummyPlanetState {
         DummyPlanetState {
             energy_cells: self
@@ -368,10 +271,7 @@ impl PlanetState {
     }
 }
 
-/// This is a dummy struct containing an overview of the internal state of a planet.
-/// Use [PlanetState::to_dummy] to construct one.
-///
-/// Used in [PlanetToOrchestrator::InternalStateResponse].
+/// A lightweight overview of a planet's internal state used for introspection requests.
 #[derive(Debug, Clone)]
 pub struct DummyPlanetState {
     pub energy_cells: Vec<bool>,
@@ -379,14 +279,7 @@ pub struct DummyPlanetState {
     pub has_rocket: bool,
 }
 
-/// Main, top-level planet definition. This type is built on top of
-/// [PlanetState], [PlanetType] and [PlanetAI], through composition.
-///
-/// It needs to be constructed by each group as it represents the actual planet
-/// and contains the base logic that runs the AI. Also, this is what should be
-/// returned to the orchestrator.
-///
-/// See module-level docs for more general info.
+/// Main planet type that composes state, type, AI and resource handlers.
 pub struct Planet {
     state: PlanetState,
     planet_type: PlanetType,
@@ -403,21 +296,19 @@ pub struct Planet {
 impl Planet {
     const ORCH_DISCONNECT_ERR: &str = "Orchestrator disconnected.";
 
-    /// Constructor for the [Planet] type.
-    ///
-    /// # Errors
-    /// Returns an error if the construction parameters are *invalid* (they violate the `planet_type` constraints).
+    /// Constructor for Planet.
     ///
     /// # Arguments
-    /// - `id` - The identifier to assign to the planet.
-    /// - `planet_type` - Type of the planet. Constraints the rules of the planet.
-    /// - `ai` - A group-defined struct implementing the [PlanetAI] trait.
-    /// - `gen_rules` - A vec of [BasicResourceType] containing the basic resources the planet will be able to generate.
-    /// - `comb_rules` - A vec of [ComplexResourceType] containing the complex resources the planet will be able to make.
-    /// - `orchestrator_channels` - A pair containing the receiver and sender half
-    ///   of the channels [OrchestratorToPlanet] and [PlanetToOrchestrator].
-    /// - `explorers_receiver` - The receiver half of the [ExplorerToPlanet] channel
-    ///   where all explorers send messages to this planet (when they're visiting it).
+    /// - `id`: planet id.
+    /// - `planet_type`: the planet type (constraints are enforced).
+    /// - `ai`: boxed PlanetAI implementation.
+    /// - `gen_rules`: list of BasicResourceType generation rules.
+    /// - `comb_rules`: list of ComplexResourceType combination rules.
+    /// - `orchestrator_channels`: (Receiver<OrchestratorToPlanet>, Sender<PlanetToOrchestrator>).
+    /// - `explorers_receiver`: Receiver<ExplorerToPlanet> for incoming explorer requests.
+    ///
+    /// # Errors
+    /// Returns Err if construction parameters violate planet type constraints.
     pub fn new(
         id: u32,
         planet_type: PlanetType,
@@ -451,7 +342,7 @@ impl Planet {
             let mut generator = Generator::new();
             let mut combinator = Combinator::new();
 
-            // add gen and comb rules to the planet generator and combinator
+            // add generation and combination rules
             for r in gen_rules {
                 let _ = generator.add(r);
             }
@@ -478,19 +369,11 @@ impl Planet {
         }
     }
 
-    /// Starts the planet in a *stopped* state, waiting for a [OrchestratorToPlanet::StartPlanetAI] message,
-    /// then invokes [PlanetAI::start] and runs the main message polling loop.
-    /// See [PlanetAI] docs to know more about when message handlers are invoked and how the planet reacts
-    /// to the different messages.
-    ///
-    /// This method is *blocking* and should be called by the orchestrator in a separate thread.
-    /// It returns with an [Ok] when the planet has been **destroyed** (killed).
-    ///
-    /// # Errors
-    /// If the orchestrator disconnects from the channel, this will return an [Err].
+    /// Start the planet loop. This blocks and should be run in a dedicated thread.
+    /// The planet starts in stopped state and waits for StartPlanetAI. Returns Ok when the
+    /// planet is killed/destroyed. Errors if orchestrator disconnects.
     pub fn run(&mut self) -> Result<(), String> {
-        // run the planet stopped by default
-        // and wait for a StartPlanetAI message
+        // run stopped by default and wait for a StartPlanetAI message
         let kill = self.wait_for_start()?;
         if kill {
             return Ok(());
@@ -500,7 +383,7 @@ impl Planet {
 
         loop {
             select_biased! {
-                // wait for orchestrator message (prioritized operation)
+                // orchestrator messages have priority
                 recv(self.from_orchestrator) -> msg => match msg {
                     Ok(OrchestratorToPlanet::StartPlanetAI) => {}
 
@@ -544,9 +427,10 @@ impl Planet {
                         explorer_id,
                         new_mpsc_sender,
                     }) => {
-                        self.to_explorers.insert(explorer_id, new_mpsc_sender); // add new explorer channel
+                        // register new explorer's dedicated sender
+                        self.to_explorers.insert(explorer_id, new_mpsc_sender);
 
-                        // send ack back to orchestrator
+                        // ack back to orchestrator
                         self.to_orchestrator
                             .send(PlanetToOrchestrator::IncomingExplorerResponse {
                                 planet_id: self.id(),
@@ -556,9 +440,10 @@ impl Planet {
                     }
 
                     Ok(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id }) => {
-                        self.to_explorers.remove(&explorer_id); // remove outgoing explorer channel
+                        // remove explorer channel
+                        self.to_explorers.remove(&explorer_id);
 
-                        // send ack back to orchestrator
+                        // ack back to orchestrator
                         self.to_orchestrator
                             .send(PlanetToOrchestrator::OutgoingExplorerResponse {
                                 planet_id: self.id(),
@@ -567,7 +452,7 @@ impl Planet {
                             .map_err(|_| Self::ORCH_DISCONNECT_ERR.to_string())?;
                     }
 
-                    // default case: relay to generic handler
+                    // default: dispatch to AI handler
                     Ok(msg) => {
                         self.ai
                             .handle_orchestrator_msg(
@@ -586,37 +471,34 @@ impl Planet {
                     }
                 },
 
-                // wait for explorer message (ignore disconnections)
+                // explorer messages (ignore disconnections)
                 recv(self.from_explorers) -> msg => if let Ok(msg) = msg {
                     let explorer_id = msg.explorer_id();
 
-                    // if requesting explorer is currently
-                    // on the planet respond to it
-                    if let Some(to_explorer) = self.to_explorers.get(&explorer_id)
-                        && let Some(response) = self.ai.handle_explorer_msg(
+                    if let Some(to_explorer) = self.to_explorers.get(&explorer_id) {
+                        if let Some(response) = self.ai.handle_explorer_msg(
                             &mut self.state,
                             &self.generator,
                             &self.combinator,
                             msg,
-                        )
-                    {
-                        to_explorer
-                            .send(response)
-                            .map_err(|_| format!("Explorer {} disconnected.", explorer_id))?;
+                        ) {
+                            to_explorer
+                                .send(response)
+                                .map_err(|_| format!("Explorer {} disconnected.", explorer_id))?;
+                        }
                     }
                 }
             }
         }
     }
 
-    // private helper function that blocks until
-    // a StartPlanetAI message is received
+    // Helper: blocks until StartPlanetAI or KillPlanet is received.
+    // Returns Ok(true) if KillPlanet was received, Ok(false) if StartPlanetAI,
+    // or Err if orchestrator disconnected.
     fn wait_for_start(&self) -> Result<bool, String> {
         loop {
             select_biased! {
-                // orch messages
                 recv(self.from_orchestrator) -> msg => match msg {
-                    // if `Start` is received, return false
                     Ok(OrchestratorToPlanet::StartPlanetAI) => {
                         self.to_orchestrator
                             .send(PlanetToOrchestrator::StartPlanetAIResult {
@@ -626,7 +508,6 @@ impl Planet {
 
                         return Ok(false);
                     }
-                    // if `Kill` is received, return true
                     Ok(OrchestratorToPlanet::KillPlanet) => {
                         self.to_orchestrator
                             .send(PlanetToOrchestrator::KillPlanetResult { planet_id: self.id() })
@@ -634,7 +515,6 @@ impl Planet {
 
                         return Ok(true)
                     }
-                    // every other message we respond with `Stopped`
                     Ok(_) => {
                         self.to_orchestrator
                             .send(PlanetToOrchestrator::Stopped {
@@ -646,11 +526,10 @@ impl Planet {
                     Err(_) => return Err(Self::ORCH_DISCONNECT_ERR.to_string()),
                 },
 
-                // explorers messages
-                recv(self.from_explorers) -> msg => if let Ok(msg) = msg &&
-                    let Some(to_explorer) = self.to_explorers.get(&msg.explorer_id())
-                {
-                    let _ = to_explorer.send(PlanetToExplorer::Stopped);
+                recv(self.from_explorers) -> msg => if let Ok(msg) = msg {
+                    if let Some(to_explorer) = self.to_explorers.get(&msg.explorer_id()) {
+                        let _ = to_explorer.send(PlanetToExplorer::Stopped);
+                    }
                 }
             }
         }
@@ -666,17 +545,17 @@ impl Planet {
         self.planet_type
     }
 
-    /// Returns an immutable borrow of planet's internal state.
+    /// Returns an immutable borrow of the planet's state.
     pub fn state(&self) -> &PlanetState {
         &self.state
     }
 
-    /// Returns an immutable borrow of the planet generator.
+    /// Returns an immutable borrow of the planet's generator.
     pub fn generator(&self) -> &Generator {
         &self.generator
     }
 
-    /// Returns an immutable borrow of the planet combinator.
+    /// Returns an immutable borrow of the planet's combinator.
     pub fn combinator(&self) -> &Combinator {
         &self.combinator
     }
@@ -685,13 +564,15 @@ impl Planet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use crossbeam_channel::{unbounded, Receiver, Sender};
     use std::thread;
     use std::time::Duration;
 
-    use crate::components::asteroid::Asteroid;
+    use crate::components::asteroid::{Asteroid, Vec2};
     use crate::components::energy_cell::EnergyCell;
-    use crate::components::resource::{BasicResourceType, Combinator, Generator};
+    use crate::components::resource::{
+        BasicResourceType, Combinator, ComplexResourceType, Generator,
+    };
     use crate::components::rocket::Rocket;
     use crate::components::sunray::Sunray;
     use crate::protocols::messages::{
@@ -763,7 +644,6 @@ mod tests {
             match state.full_cell() {
                 None => None,
                 Some((_cell, i)) => {
-                    // assert!(cell.is_charged());
                     let _ = state.build_rocket(i);
                     state.take_rocket()
                 }
@@ -780,13 +660,9 @@ mod tests {
     }
 
     // --- Helper for creating dummy channels ---
-    // Returns the halves required by Planet::new
     type PlanetOrchHalfChannels = (Receiver<OrchestratorToPlanet>, Sender<PlanetToOrchestrator>);
-
     type PlanetExplHalfChannels = (Receiver<ExplorerToPlanet>, Sender<PlanetToExplorer>);
-
     type OrchPlanetHalfChannels = (Sender<OrchestratorToPlanet>, Receiver<PlanetToOrchestrator>);
-
     type ExplPlanetHalfChannels = (Sender<ExplorerToPlanet>, Receiver<PlanetToExplorer>);
 
     fn get_test_channels() -> (
@@ -795,14 +671,10 @@ mod tests {
         OrchPlanetHalfChannels,
         ExplPlanetHalfChannels,
     ) {
-        // Channel 1: Orchestrator -> Planet
         let (tx_orch_in, rx_orch_in) = unbounded::<OrchestratorToPlanet>();
-        // Channel 2: Planet -> Orchestrator
         let (tx_orch_out, rx_orch_out) = unbounded::<PlanetToOrchestrator>();
 
-        // Channel 3: Explorer -> Planet
         let (tx_expl_in, rx_expl_in) = unbounded::<ExplorerToPlanet>();
-        // Channel 4: Planet -> Explorer
         let (tx_expl_out, rx_expl_out) = unbounded::<PlanetToExplorer>();
 
         (
@@ -963,7 +835,12 @@ mod tests {
 
         // 3. Send Asteroid (AI should build rocket using the charged cell)
         tx_to_planet_orch
-            .send(OrchestratorToPlanet::Asteroid(Asteroid::new()))
+            .send(OrchestratorToPlanet::Asteroid(Asteroid::new(
+                Vec2::default(),
+                Vec2::default(),
+                1.0,
+                1.0,
+            )))
             .unwrap();
 
         // 4. Expect Survival (Ack with Some(Rocket))
@@ -1069,9 +946,6 @@ mod tests {
         ) = get_test_channels();
 
         // 2. Setup Planet
-        // Note: Planet::new only takes the Receiver half for explorers,
-        // so we extract it from the tuple. The Sender half in the tuple is unused
-        // by the planet itself (since it uses dynamic senders), but kept for type consistency.
         let (planet_expl_rx, _) = planet_expl_channels;
 
         let mut planet = Planet::new(
@@ -1105,7 +979,6 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
 
         // 4. Setup Local Explorer Channels (Simulating Explorer 101)
-        // We create a dedicated channel for this specific explorer interaction
         let explorer_id = 101;
         let (expl_tx_local, expl_rx_local) = unbounded::<PlanetToExplorer>();
 
@@ -1127,7 +1000,6 @@ mod tests {
         }
 
         // 7. Test Interaction (Explorer -> Planet -> Explorer)
-        // Explorer sends a request using the GLOBAL channel, but includes its ID
         expl_tx_global
             .send(ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id })
             .unwrap();
@@ -1178,7 +1050,6 @@ mod tests {
         }
 
         // 10. Verify Isolation
-        // Explorer sends another request
         expl_tx_global
             .send(ExplorerToPlanet::AvailableEnergyCellRequest { explorer_id })
             .unwrap();

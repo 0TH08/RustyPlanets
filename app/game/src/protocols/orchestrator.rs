@@ -1,89 +1,121 @@
 use crate::components::asteroid::Asteroid;
-use crate::components::planet::{Planet, PlanetAI};
+use crate::components::forge::Forge;
+use crate::components::planet::Planet;
 use crate::components::sunray::Sunray;
 use crate::logging::LogEvent;
 use crate::protocols::messages::{
-    CombineResourceRequest, CurrentPlanetRequest, GenerateResourceRequest, MoveToPlanet,
-    ResetExplorerAIMsg, StartPlanetAiMsg, StopPlanetAiMsg, SupportedCombinationRequest,
-    SupportedResourceRequest,
+    OrchestratorToPlanet, PlanetToOrchestrator,
 };
+use crossbeam_channel::{Receiver, Sender};
+use std::collections::HashMap;
+use std::time::Duration;
 
-#[allow(unused)]
-use std::sync::mpsc;
+pub struct Orchestrator {
+    forge: Forge,
+    planets: HashMap<u32, (Sender<OrchestratorToPlanet>, Receiver<PlanetToOrchestrator>)>,
+}
 
-//Dummy definitions to avoid errors, waiting for other contractors to push their implementations
-#[allow(unused)]
-pub struct Explorer;
+impl Orchestrator {
+    pub fn new() -> Result<Self, String> {
+        let forge = Forge::new()?;
+        Ok(Self {
+            forge,
+            planets: HashMap::new(),
+        })
+    }
 
-// Marker trait for the galaxy abstraction.
-// This trait constraints the orchestrator to have a data structure that contains the galaxy information.
-#[allow(unused)]
-pub trait GalaxyTrait {}
+    pub fn register_planet_channels(
+        &mut self,
+        planet_id: u32,
+        tx_to_planet: Sender<OrchestratorToPlanet>,
+        rx_from_planet: Receiver<PlanetToOrchestrator>,
+    ) {
+        self.planets.insert(planet_id, (tx_to_planet, rx_from_planet));
+    }
 
-// Messages that the Orchestrator can send to a Planet.
-// Start/Stop AI have been wrapped in dedicated structs (StartPlanetAiMsg / StopPlanetAiMsg)
-// to constrain and clarify their signatures.
+    pub fn create_sunray(&self) -> Sunray {
+        self.forge.generate_sunray()
+    }
 
-// Using a struct instead of a bare enum variant argument gives us type-safety and
-// the possibility to extend this message later without changing the enum shape.
-#[allow(unused)]
-pub trait OrchestratorTrait {
-    // • Initializes planets (planet definitions are loaded from the galaxy initialization file).
-    // Returns a type implementing GalaxyTrait, representing the logical galaxy abstraction.
-    fn initialize_galaxy(&mut self, path: &str) -> impl GalaxyTrait;
+    pub fn create_asteroid(&self) -> Asteroid {
+        self.forge.generate_asteroid()
+    }
 
-    // • Constructs planets and explorers.
+    pub fn send_sunray(&self, s: Sunray, planet_id: u32) -> Result<(), String> {
+        if let Some((tx, _rx)) = self.planets.get(&planet_id) {
+            tx.send(OrchestratorToPlanet::Sunray(s))
+                .map_err(|e| format!("send_sunray send error: {}", e))
+        } else {
+            Err(format!("unknown planet {}", planet_id))
+        }
+    }
 
-    // For now, we use a string from the initialization file to initialize every planet.
-    // This matches the PDF’s notion that planet configuration is file-driven.
-    fn make_planet<T: PlanetAI>(&self, init_sting: String) -> Planet<T>;
+    pub fn send_asteroid(&self, a: Asteroid, planet_id: u32) -> Result<(), String> {
+        if let Some((tx, _rx)) = self.planets.get(&planet_id) {
+            tx.send(OrchestratorToPlanet::Asteroid(a))
+                .map_err(|e| format!("send_asteroid send error: {}", e))
+        } else {
+            Err(format!("unknown planet {}", planet_id))
+        }
+    }
 
-    // Creates a new explorer.
-    // In the PDF, explorers are also constructed and managed by the orchestrator.
-    fn make_explorer() -> Explorer;
+    pub fn start_planet_ai(&self, planet_id: u32) -> Result<(), String> {
+        if let Some((tx, rx)) = self.planets.get(&planet_id) {
+            tx.send(OrchestratorToPlanet::StartPlanetAI)
+                .map_err(|e| format!("start send error: {}", e))?;
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(PlanetToOrchestrator::StartPlanetAIResult { .. }) => Ok(()),
+                Ok(other) => Err(format!("unexpected response: {:?}", other)),
+                Err(e) => Err(format!("start_planet_ai recv error: {}", e)),
+            }
+        } else {
+            Err(format!("unknown planet {}", planet_id))
+        }
+    }
 
-    // • Distributes all channels and starts the game.
-    // The orchestrator is responsible for wiring up all entities and communication links.
-    fn start_game(path: &str) -> Self;
+    pub fn stop_planet_ai(&self, planet_id: u32) -> Result<(), String> {
+        if let Some((tx, rx)) = self.planets.get(&planet_id) {
+            tx.send(OrchestratorToPlanet::StopPlanetAI)
+                .map_err(|e| format!("stop send error: {}", e))?;
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(PlanetToOrchestrator::StopPlanetAIResult { .. }) => Ok(()),
+                Ok(other) => Err(format!("unexpected response: {:?}", other)),
+                Err(e) => Err(format!("stop_planet_ai recv error: {}", e)),
+            }
+        } else {
+            Err(format!("unknown planet {}", planet_id))
+        }
+    }
 
-    // • Is the only Sunray constructor.
-    fn create_sunray() -> Sunray;
+    pub fn kill_planet(&self, planet_id: u32) -> Result<(), String> {
+        if let Some((tx, rx)) = self.planets.get(&planet_id) {
+            tx.send(OrchestratorToPlanet::KillPlanet)
+                .map_err(|e| format!("kill send error: {}", e))?;
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(PlanetToOrchestrator::KillPlanetResult { .. }) => Ok(()),
+                Ok(other) => Err(format!("unexpected response: {:?}", other)),
+                Err(e) => Err(format!("kill_planet recv error: {}", e)),
+            }
+        } else {
+            Err(format!("unknown planet {}", planet_id))
+        }
+    }
 
-    // • Is the only Asteroid constructor.
-    fn create_asteroid() -> Asteroid;
+    pub fn request_internal_state(&self, planet_id: u32) -> Result<(), String> {
+        if let Some((tx, rx)) = self.planets.get(&planet_id) {
+            tx.send(OrchestratorToPlanet::InternalStateRequest)
+                .map_err(|e| format!("internal state send error: {}", e))?;
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(PlanetToOrchestrator::InternalStateResponse { .. }) => Ok(()),
+                Ok(other) => Err(format!("unexpected response: {:?}", other)),
+                Err(e) => Err(format!("request_internal_state recv error: {}", e)),
+            }
+        } else {
+            Err(format!("unknown planet {}", planet_id))
+        }
+    }
 
-    // Functions for Orchestrator → Planet.
-    // These methods conceptually wrap sending an OrchestratorToPlanet message on the correct channel.
-
-    fn send_sunray<T, E>(&self, s: Sunray, planet_id: u32) -> Result<T, E>;
-
-    fn send_asteroid<T, E>(&self, a: Asteroid, planet_id: u32) -> Result<T, E>;
-
-    fn start_planet_ai<T, E>(&self, msg: StartPlanetAiMsg, planet_id: u32) -> Result<T, E>;
-
-    fn stop_planet_ai<T, E>(&self, msg: StopPlanetAiMsg, planet_id: u32) -> Result<T, E>;
-
-    // Functions for Orchestrator → Explorer.
-    // These methods conceptually wrap sending an OrchestratorToExplorer message
-    // on the explorer’s command channel.
-
-    fn reset_explorer_ai<T, E>(&self, msg: ResetExplorerAIMsg, explorer_id: u32) -> Result<T, E>;
-
-    fn move_to_planet<T, E>(&self, msg: MoveToPlanet) -> Result<T, E>;
-
-    fn current_planet<T, E>(&self, msg: CurrentPlanetRequest) -> Result<T, E>;
-
-    fn supported_resource_request<T, E>(&self, msg: SupportedResourceRequest) -> Result<T, E>;
-
-    fn supported_combination_request<T, E>(&self, msg: SupportedCombinationRequest)
-    -> Result<T, E>;
-
-    fn generate_resource_request<T, E>(&self, msg: GenerateResourceRequest) -> Result<T, E>;
-
-    fn combine_resource_request<T, E>(&self, msg: CombineResourceRequest) -> Result<T, E>;
-
-    /// Hook for the orchestrator to handle log events (default: forward to `log` crate)
-    fn log_event(&self, event: LogEvent) {
+    pub fn log_event(&self, event: LogEvent) {
         log::info!("{:?}", event);
     }
 }

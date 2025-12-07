@@ -1,0 +1,1 @@
+components::asteroid::Vec2: std::default::Default
