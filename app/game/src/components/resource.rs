@@ -20,25 +20,11 @@ pub trait Resource: Display {
     fn to_static_str(&self) -> &'static str;
 }
 
-pub trait Bag<T> {
-    fn is_empty(&self) -> bool;
-    fn contains_complex(&self, complex: ComplexResourceType) -> bool;
-    fn contains_basic(&self, basic: BasicResourceType) -> bool;
-    fn contains(&self, generic: ResourceType) -> bool;
-    fn size(&self) -> u32;
-    fn capacity(&self) -> u32;
-    fn get_count(&self, generic: ResourceType) -> u32;
-    fn get_count_complex(&self, complex: ComplexResourceType) -> u32;
-    fn get_count_basic(&self, basic: BasicResourceType) -> u32;
-    ///this method serves the purpose to the expose the internal structure of the bag and is implementation dependent,
-    fn get_content(&self) -> T;
-}
-
 ///
 /// Identifies a resource which could be both [`BasicResourceType`] and [`ComplexResourceType`]
 /// without actually containing the underlying resource,
 ///
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResourceType {
     Basic(BasicResourceType),
     Complex(ComplexResourceType),
@@ -46,10 +32,20 @@ pub enum ResourceType {
 ///
 /// Contains a resource which could be both [`BasicResource`] and [`ComplexResource`]
 ///
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum GenericResource {
     BasicResources(BasicResource),
     ComplexResources(ComplexResource),
+}
+
+impl GenericResource {
+    /// Gets the ResourceType for this GenericResource
+    pub fn get_type(&self) -> ResourceType {
+        match self {
+            GenericResource::BasicResources(basic) => ResourceType::Basic(basic.get_type()),
+            GenericResource::ComplexResources(complex) => ResourceType::Complex(complex.get_type()),
+        }
+    }
 }
 
 impl Hash for ComplexResourceType {
@@ -150,7 +146,7 @@ macro_rules! define_resources {
         (Basic: [$($basic:ident),* $(,)?], Complex: [$($complex:ident),* $(,)?]) => {
 
             $(
-                #[derive(Debug)]
+                #[derive(Debug, PartialEq,Eq,Hash)]
                 pub struct $basic { _private: () }
 
                 impl Display for $basic {
@@ -158,6 +154,28 @@ macro_rules! define_resources {
                         write!(f, "Basic Resource {}", stringify!($basic))
                     }
                 }
+
+                impl $basic {
+                    pub fn to_type(&self) -> ResourceType {
+                        match self {
+                            $basic { .. } =>  ResourceType::Basic(BasicResourceType::$basic),
+                        }
+                    }
+                    pub fn to_generic(self) -> GenericResource {
+                        GenericResource::BasicResources( BasicResource::$basic(self) )
+                    }
+
+                    pub fn to_basic(self) -> BasicResource {
+                        BasicResource::$basic( self )
+                    }
+                    pub fn to_basic_type(&self) -> BasicResourceType {
+                        match self {
+                            $basic { .. } =>  BasicResourceType::$basic,
+                        }
+                    }
+                }
+
+
 
                 impl Resource for $basic {
                     fn to_static_str(&self) -> &'static str {
@@ -173,7 +191,7 @@ macro_rules! define_resources {
             )*
 
             $(
-                #[derive(Debug)]
+                #[derive(Debug, PartialEq,Eq,Hash)]
                 pub struct $complex {
                     _private: (),
                 }
@@ -189,7 +207,101 @@ macro_rules! define_resources {
                     }
                 }
 
+                 impl $complex {
+                        pub fn to_type(&self) -> ResourceType {
+                            match self {
+                                $complex { .. } =>  ResourceType::Complex(ComplexResourceType::$complex),
+                            }
+                        }
+                        pub fn to_generic(self) -> GenericResource {
+                            GenericResource::ComplexResources( ComplexResource::$complex(self) )
+                        }
+
+                        pub fn to_complex(self) -> ComplexResource {
+                            ComplexResource::$complex( self )
+                        }
+                        pub fn to_complex_type(&self) -> ComplexResourceType {
+                            match self {
+                                $complex { .. } =>  ComplexResourceType::$complex,
+                            }
+                        }
+                 }
+
+
+
+
             )*
+
+
+            impl ResourceType{
+                    paste::paste! {
+                        $( pub fn [< make_ $complex:lower >] () -> Self {
+                                ResourceType::Complex(ComplexResourceType::$complex)
+                            }
+                        )*
+                    }
+
+                    paste::paste! {
+                        $( pub fn [< is_ $complex:lower >] (&self) -> bool {
+                             if let   ResourceType::Complex(ComplexResourceType::$complex) = self {
+                            true
+                        }
+                            else { false
+                            }
+                            }
+                        )*
+                    }
+
+                     paste::paste! {
+                        $( pub fn [< make_ $basic:lower >] () -> Self {
+                                ResourceType::Basic(BasicResourceType::$basic)
+                            }
+                        )*
+                    }
+
+                    paste::paste! {
+                        $( pub fn [< is_ $basic:lower >] (&self) -> bool {
+                             if let   ResourceType::Basic(BasicResourceType::$basic) = self {
+                            true
+                        }
+                            else { false
+                            }
+                            }
+                        )*
+                    }
+
+            }
+
+            impl BasicResourceType{
+
+                    paste::paste! {
+                        $( pub fn [< is_ $basic:lower >] (&self) -> bool {
+                             if let   BasicResourceType::$basic = self {
+                            true
+                        }
+                            else { false
+                            }
+                            }
+                        )*
+                    }
+
+            }
+
+
+               impl ComplexResourceType{
+
+                    paste::paste! {
+                        $( pub fn [< is_ $complex:lower >] (&self) -> bool {
+                             if let   ComplexResourceType::$complex = self {
+                            true
+                        }
+                            else { false
+                            }
+                            }
+                        )*
+                    }
+
+            }
 
              ///
              /// Identifies a [`ComplexResource`]
@@ -199,6 +311,63 @@ macro_rules! define_resources {
             pub enum ComplexResourceType {
                 $($complex,)*
             }
+
+            impl BasicResource {
+                pub fn get_type(&self) -> BasicResourceType {
+                    match self {
+                        $( BasicResource:: $basic (_) => BasicResourceType::$basic, )*
+                    }
+                }
+                paste::paste!{
+                           $( pub fn [< to_ $basic:lower >] (self) -> Result< $basic , String> {
+                            match self {
+                                BasicResource:: $basic (h) => Ok(h) ,
+                                _ => Err( "Different type found".into() )
+                            }
+                        }
+                    )*
+                }
+            }
+            impl GenericResource {
+                paste::paste! {
+                   $( pub fn [< to_ $complex:lower >] (self) -> Result< $complex,String> {
+                            match self {
+                                GenericResource::ComplexResources(ComplexResource:: $complex(h))  => Ok(h),
+                                _ => Err("Different type found".into())
+                            }
+                        }
+                    )*
+                }
+
+                paste::paste! {
+                   $( pub fn [< to_ $basic:lower >] (self) -> Result< $basic , String> {
+                            match self {
+                                GenericResource::BasicResources(BasicResource:: $basic(h))  => Ok(h),
+                                _ => Err("Different type found".into())
+                            }
+                        }
+                    )*
+                }
+            }
+
+            impl ComplexResource {
+                pub fn get_type(&self) -> ComplexResourceType {
+                    match self {
+                         $( ComplexResource:: $complex (_) => ComplexResourceType::$complex, )*
+                    }
+                }
+
+                paste::paste!{
+                   $( pub fn [< to_ $complex:lower >] (self) -> Result< $complex,String> {
+                    match self {
+                        ComplexResource:: $complex( h) => Ok(h) ,
+                        _ => Err("Different type found".into())
+                    }
+                }
+                )*
+                }
+            }
+
 
             impl PartialEq<Self> for ComplexResourceType {
                 fn eq(&self, other: &Self) -> bool {
@@ -220,7 +389,7 @@ macro_rules! define_resources {
              ///
              /// Gives the choice between every possible basic resource
              ///
-             #[derive(Debug)]
+             #[derive(Debug, PartialEq,Eq,Hash)]
             pub enum BasicResource {
                 $($basic($basic),)*
             }
@@ -228,7 +397,7 @@ macro_rules! define_resources {
              ///
              /// Gives the choice between every possible complex resource
              ///
-             #[derive(Debug)]
+             #[derive(Debug ,PartialEq,Eq,Hash)]
             pub enum ComplexResource {
                 $($complex($complex),)*
             }
@@ -277,7 +446,7 @@ macro_rules! define_combination_rules {
                  ///
                  /// Gives a structured way to pass around the request to produce a complex resource
                  ///
-                 #[derive(Debug)]
+                 #[derive(Debug, PartialEq,Eq,Hash )]
                 pub enum ComplexResourceRequest{
                      $([<$result >]( $lhs, $rhs ), )*
                 }
