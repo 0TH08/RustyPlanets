@@ -1,1 +1,1 @@
-mod type_a;
+pub mod type_a;
