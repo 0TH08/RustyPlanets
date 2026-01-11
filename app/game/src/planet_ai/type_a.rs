@@ -9,6 +9,7 @@ use crate::components::resource::{
     BasicResource, BasicResourceType, ComplexResource, ComplexResourceRequest, ComplexResourceType,
     Combinator, Generator, GenericResource,
 };
+use crate::components::energy_cell::EnergyCell;
 use crate::components::rocket::Rocket;
 use crate::protocols::messages::{
     ExplorerToPlanet, OrchestratorToPlanet, PlanetToExplorer, PlanetToOrchestrator,
@@ -21,7 +22,9 @@ use std::collections::HashSet;
 ///
 /// Notes:
 /// - Type A has 5 energy cells (handled by PlanetState).
-/// - Type A is limited to a single generation rule (we pick Oxygen in `create_planet`).
+/// - Type A is limited to a single generation rule (we pick Carbon in `create_planet`).
+/// - The first three energy cells are reserved for resource generation.
+/// - The last two energy cells are reserved for asteroid defense (rocket building).
 /// - Type A has no combination recipes — combine requests are rejected but the
 ///   original resources are returned inside the error result (per protocol).
 pub struct TypeAPlanetAI {
@@ -34,6 +37,39 @@ impl TypeAPlanetAI {
     pub fn new() -> Self {
         Self { sunray_seen: 0 }
     }
+}
+
+const TYPE_A_RESOURCE_CELL_COUNT: usize = 3;
+
+fn charge_reserved_cell(state: &mut PlanetState, sunray: crate::components::sunray::Sunray) {
+    let total_cells = state.cells_count();
+    let resource_end = TYPE_A_RESOURCE_CELL_COUNT.min(total_cells);
+
+    for idx in 0..resource_end {
+        if !state.cell(idx).is_charged() {
+            state.cell_mut(idx).charge(sunray);
+            return;
+        }
+    }
+
+    for idx in resource_end..total_cells {
+        if !state.cell(idx).is_charged() {
+            state.cell_mut(idx).charge(sunray);
+            return;
+        }
+    }
+}
+
+fn charged_cell_in_range(
+    state: &mut PlanetState,
+    range: std::ops::Range<usize>,
+) -> Option<(&mut EnergyCell, usize)> {
+    for idx in range {
+        if state.cell(idx).is_charged() {
+            return Some((state.cell_mut(idx), idx));
+        }
+    }
+    None
 }
 
 impl PlanetAI for TypeAPlanetAI {
@@ -49,8 +85,7 @@ impl PlanetAI for TypeAPlanetAI {
             // Charge a first-empty cell with the incoming sunray.
             OrchestratorToPlanet::Sunray(sunray) => {
                 self.sunray_seen = self.sunray_seen.saturating_add(1);
-                // charge_cell will return Some(sunray) if there was no empty cell.
-                let _leftover = state.charge_cell(sunray);
+                charge_reserved_cell(state, sunray);
                 Some(PlanetToOrchestrator::SunrayAck {
                     planet_id: state.id(),
                 })
@@ -108,8 +143,10 @@ impl PlanetAI for TypeAPlanetAI {
                     return Some(PlanetToExplorer::GenerateResourceResponse { resource: None });
                 }
 
-                // Use a charged cell
-                match state.full_cell() {
+                // Use a charged cell from the resource-reserved range.
+                let total_cells = state.cells_count();
+                let resource_end = TYPE_A_RESOURCE_CELL_COUNT.min(total_cells);
+                match charged_cell_in_range(state, 0..resource_end) {
                     None => Some(PlanetToExplorer::GenerateResourceResponse { resource: None }),
                     Some((cell, _idx)) => {
                         // Dispatch to the appropriate generator method.
@@ -176,7 +213,9 @@ impl PlanetAI for TypeAPlanetAI {
         _generator: &Generator,
         _combinator: &Combinator,
     ) -> Option<Rocket> {
-        match state.full_cell() {
+        let total_cells = state.cells_count();
+        let resource_end = TYPE_A_RESOURCE_CELL_COUNT.min(total_cells);
+        match charged_cell_in_range(state, resource_end..total_cells) {
             None => None,
             Some((_cell, idx)) => {
                 if state.build_rocket(idx).is_ok() {
@@ -206,8 +245,8 @@ pub fn create_planet(
 ) -> Result<Planet, String> {
     let ai = TypeAPlanetAI::new();
 
-    // Type A: choose Oxygen as the single generation recipe.
-    let gen_rules = vec![BasicResourceType::Oxygen];
+    // Type A: choose Carbon as the single generation recipe.
+    let gen_rules = vec![BasicResourceType::Carbon];
 
     // Type A: no combination rules.
     let comb_rules: Vec<ComplexResourceType> = vec![];
@@ -295,19 +334,21 @@ mod tests {
             panic!("Timed out waiting for StartPlanetAIResult");
         }
 
-        // Send Sunray
-        orch_tx_for_test
-            .send(OrchestratorToPlanet::Sunray(crate::components::sunray::Sunray::new()))
-            .expect("failed to send Sunray");
+        // Send Sunrays (3 for resource cells + 1 for rocket cell)
+        for _ in 0..4 {
+            orch_tx_for_test
+                .send(OrchestratorToPlanet::Sunray(crate::components::sunray::Sunray::new()))
+                .expect("failed to send Sunray");
 
-        if let Ok(msg) = orch_rx_for_test.recv_timeout(Duration::from_millis(500)) {
-            if let PlanetToOrchestrator::SunrayAck { planet_id } = msg {
-                assert_eq!(planet_id, 42);
+            if let Ok(msg) = orch_rx_for_test.recv_timeout(Duration::from_millis(500)) {
+                if let PlanetToOrchestrator::SunrayAck { planet_id } = msg {
+                    assert_eq!(planet_id, 42);
+                } else {
+                    panic!("Expected SunrayAck from planet");
+                }
             } else {
-                panic!("Expected SunrayAck from planet");
+                panic!("Timed out waiting for SunrayAck");
             }
-        } else {
-            panic!("Timed out waiting for SunrayAck");
         }
 
         // Send Asteroid
@@ -358,8 +399,8 @@ mod tests {
         if let Ok(msg) = rx_local_from_planet.recv_timeout(Duration::from_millis(500)) {
             if let PlanetToExplorer::SupportedResourceResponse { resource_list } = msg {
                 assert!(
-                    resource_list.contains(&BasicResourceType::Oxygen),
-                    "Type A planet should expose Oxygen in supported resources"
+                    resource_list.contains(&BasicResourceType::Carbon),
+                    "Type A planet should expose Carbon in supported resources"
                 );
             } else {
                 panic!("Expected SupportedResourceResponse on local explorer channel");
@@ -368,7 +409,7 @@ mod tests {
             panic!("Timed out waiting for SupportedResourceResponse on explorer channel");
         }
 
-        // Generation: charge and generate Oxygen
+        // Generation: charge and generate Carbon
         orch_tx_for_test
             .send(OrchestratorToPlanet::Sunray(crate::components::sunray::Sunray::new()))
             .expect("failed to send Sunray for generation");
@@ -384,19 +425,19 @@ mod tests {
             panic!("Timed out waiting for SunrayAck after charging cell");
         }
 
-        // Request generation of Oxygen
+        // Request generation of Carbon
         expl_tx_global
             .send(ExplorerToPlanet::GenerateResourceRequest {
                 explorer_id,
-                resource: BasicResourceType::Oxygen,
+                resource: BasicResourceType::Carbon,
             })
             .expect("failed to send GenerateResourceRequest");
 
         if let Ok(msg) = rx_local_from_planet.recv_timeout(Duration::from_millis(500)) {
             if let PlanetToExplorer::GenerateResourceResponse { resource } = msg {
                 match resource {
-                    Some(BasicResource::Oxygen(_)) => {}
-                    Some(_) => panic!("Expected Oxygen resource, got a different BasicResource"),
+                    Some(BasicResource::Carbon(_)) => {}
+                    Some(_) => panic!("Expected Carbon resource, got a different BasicResource"),
                     None => panic!("Planet replied with None for GenerateResourceResponse"),
                 }
             } else {
@@ -450,5 +491,3 @@ mod tests {
         assert!(join_res.is_ok(), "Planet thread panicked");
     }
 }
-
-
