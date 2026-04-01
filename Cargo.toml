@@ -1,0 +1,31 @@
+[package]
+name = "skycartel"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "skycartel"
+path = "src/lib.rs"
+
+[dependencies]
+common-game = "3.0.0"
+crossbeam-channel = "0.5"
+log = "0.4"
+thiserror = "2.0"
+axum = { version = "0.7", features = ["ws", "macros", "json"] }
+tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+tempfile = "3.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[[bin]]
+name = "skycartel-gui-server"
+path = "src/bin/gui_server.rs"
