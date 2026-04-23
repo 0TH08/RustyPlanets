@@ -1,2 +1,7 @@
 /target/
 *.pdb
+**/node_modules/
+**/dist/
+.DS_Store
+sh-thd-*
+
