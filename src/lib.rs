@@ -2,6 +2,7 @@
 //! Skycartel planet crate (RustyPlanet implementation)
 
 pub mod logging;
+pub mod orchestrator;
 pub mod planet_ai;
 
 #[cfg(test)]
