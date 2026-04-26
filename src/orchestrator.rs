@@ -27,6 +27,10 @@ pub struct Orchestrator {
     running: Arc<AtomicBool>,
 }
 
+pub struct StopHandle{
+    running: Arc<AtomicBool>,
+}
+
 // ── Core ──────────────────────────────────────────────────────────────────────
 
 impl Orchestrator {
@@ -53,15 +57,18 @@ impl Orchestrator {
         })
     }
 
-    pub fn run(self) {
+    pub fn run(mut self) -> StopHandle {
         // set flag to true — loop is starting
         self.running.store(true, std::sync::atomic::Ordering::SeqCst);
 
         // clone the Arc so the thread can share the flag
         let running = Arc::clone(&self.running);
 
+        // second clone — this one moves into the thread, running is returned to caller
+        let running_thread = Arc::clone(&running);
+
         std::thread::spawn(move || {
-            while running.load(std::sync::atomic::Ordering::SeqCst) {
+            while running_thread.load(std::sync::atomic::Ordering::SeqCst) {
 
                 //send sunray to each planet
                 for &planet_id in self.planet_senders.keys() {
@@ -86,6 +93,15 @@ impl Orchestrator {
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
         });
+
+        StopHandle { running }
+    }
+}
+
+impl StopHandle{
+
+    pub fn stop(&self){
+        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -132,7 +148,7 @@ impl Orchestrator {
 
 impl Orchestrator {
 
-    fn handle_planet_responses(&self) {
+    fn handle_planet_responses(&mut self) {
         // try_recv() — non-blocking, returns immediately if nothing is there
         while let Ok(msg) = self.planet_receiver.try_recv() {
             match msg {
@@ -169,9 +185,10 @@ impl Orchestrator {
         }
     }
 
+    // TODO: configure a logger to see these messages
+
     fn handle_sunray_ack(&self, planet_id : u32) {
         // planet confirmed it got the sunray
-        // TODO: configure a logger to see these messages
         log::debug!("Planet {planet_id} acknowledged sunray");
     }
 
@@ -188,31 +205,49 @@ impl Orchestrator {
         }
     }
 
+    // planet confirmed an explorer arrived — log success or failure
     fn handle_incoming_explorer_response(&self, planet_id : u32, explorer_id : u32, res: Result<(), String>) {
-        todo!()
+        match res{
+            Ok(_) => {log::info!("Explorer {explorer_id} arrived at planet {planet_id}")},
+            Err(e)=>{log::warn!("Explorer {explorer_id} failed to arrive at planet {planet_id}: {e}")},
+        }
     }
 
     fn handle_internal_state_response(&self, planet_id : u32, planet_state : DummyPlanetState) {
-        todo!()
+        // log that we rcvd internal state from a planet
+        log::debug!("Received internal state from planet {planet_id}");
     }
 
-    fn handle_kill_planet_result(&self, planet_id : u32) {
-        todo!()
+    fn handle_kill_planet_result(&mut self, planet_id : u32) {
+        // planet was destroyed by an asteroid
+        // log it
+        log::warn!("Planet {planet_id} has been destroyed by an asteroid");
+
+        // remove planet_id from planet_senders
+        self.planet_senders.remove(&planet_id);
+        
     }
 
+    // planet confirmed an explorer departed — log success or failure
     fn handle_outgoing_explorer_response(&self, planet_id : u32, explorer_id : u32, res: Result<(), String>) {
-        todo!()
+        match res{
+            Ok(_)=> {log::info!("Explorer {explorer_id} left planet {planet_id}")},
+            Err(e)=> {log::warn!("Explorer {explorer_id} failed to leave planet {planet_id}: {e}")}
+        }
     }
 
+    // planet confirmed its AI has started
     fn handle_start_planet_ai_result(&self, planet_id : u32) {
-        todo!()
+        log::info!("Planet AI started for the planet {planet_id}");
     }
 
+    // planet confirmed its AI has stopped
     fn handle_stop_planet_ai_result(&self, planet_id : u32) {
-        todo!()
+        log::info!("Planet AI stopped for the planet {planet_id}");
     }
 
+    // planet confirmed it has stopped
     fn handle_stopped(&self, planet_id : u32) {
-        todo!()
+        log::info!("Planet {planet_id} stopped");
     }
 }
