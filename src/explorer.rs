@@ -109,7 +109,11 @@ impl Explorer{
                         self.handle_neighbors_response(neighbors);
                     }
 
-                    OrchestratorToExplorer::KillExplorer => {break;}
+                    OrchestratorToExplorer::KillExplorer => {
+                        let response= ExplorerToOrchestrator::KillExplorerResult { explorer_id: self.id };
+                        let _ = self.orchestrator_sender.send(response);
+                        break;
+                    }
                                         
                 }
             }
