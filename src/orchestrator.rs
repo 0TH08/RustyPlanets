@@ -10,13 +10,9 @@ use crossbeam_channel::{Receiver, Sender};
 
 use common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
+use crate::explorer::Bag;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-pub struct Bag {
-    basic_resources : HashMap<BasicResourceType, u32>,
-    complex_resources: HashMap<ComplexResourceType, u32>,
-}
 
 pub struct Orchestrator {
     planet_senders: HashMap<u32, Sender<OrchestratorToPlanet>>,

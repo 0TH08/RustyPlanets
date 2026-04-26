@@ -4,6 +4,7 @@
 pub mod logging;
 pub mod orchestrator;
 pub mod planet_ai;
+pub mod explorer;
 
 #[cfg(test)]
 mod tests;
