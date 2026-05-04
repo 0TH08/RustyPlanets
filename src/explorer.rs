@@ -2,21 +2,24 @@ use std::thread::{self, JoinHandle};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc,Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use common_game::protocols::orchestrator_explorer::{OrchestratorToExplorer, ExplorerToOrchestrator};
 use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 use crossbeam_channel::{Sender, Receiver};
 use common_game::components::resource::{
-    BasicResource, BasicResourceType, ComplexResource, ComplexResourceRequest, ComplexResourceType
+    BasicResource, BasicResourceType, ComplexResource, ComplexResourceRequest, ComplexResourceType,
+    GenericResource
 };
+
 
 use common_game::utils::ID;
 
-pub struct Explorer{
+pub struct Explorer<T>{
     id: ID,
     current_planet_id: ID,
     neighbors: Vec<ID>,
-    orchestrator_sender: Sender<ExplorerToOrchestrator<Bag>>,
+    orchestrator_sender: Sender<ExplorerToOrchestrator<T>>,
     orchestrator_receiver: Receiver<OrchestratorToExplorer>,
     planet_sender: Sender<ExplorerToPlanet>,
     planet_receiver: Receiver<PlanetToExplorer>,
@@ -32,11 +35,16 @@ pub struct Bag {
     complex_resource_instances : HashMap<ComplexResourceType , Vec<ComplexResource>>,
 }
 
-impl Explorer{
+pub struct BagSummary {
+    pub basic_resources: HashMap<BasicResourceType, u32>,
+    pub complex_resources: HashMap<ComplexResourceType, u32>,
+}
+
+impl<T: From<BagSummary> + Send + 'static> Explorer<T>{
     pub fn new(
         id: ID,
         current_planet_id: ID,
-        orchestrator_sender: Sender<ExplorerToOrchestrator<Bag>>,
+        orchestrator_sender: Sender<ExplorerToOrchestrator<T>>,
         orchestrator_receiver: Receiver<OrchestratorToExplorer>,
         planet_sender: Sender<ExplorerToPlanet>,
         planet_receiver: Receiver<PlanetToExplorer>,
@@ -136,7 +144,7 @@ impl Explorer{
         self.neighbors = neighbors;
     }
 
-    fn handle_combine_resource_request(&mut self, to_generate: ComplexResourceType)->ExplorerToOrchestrator<Bag>{
+    fn handle_combine_resource_request(&mut self, to_generate: ComplexResourceType)->ExplorerToOrchestrator<T>{
         let req = match to_generate{
             ComplexResourceType::Water => self.make_water(),
             ComplexResourceType::Diamond => self.make_diamond(),
@@ -164,7 +172,9 @@ impl Explorer{
                     ExplorerToOrchestrator::CombineResourceResponse { explorer_id: self.id, generated: Ok(()) }
                 }
 
-                Err((e, _lhs, _rhs))=>{
+                Err((e, r1, r2))=>{
+                    self.bag.lock().unwrap().restore_resource(r1);
+                    self.bag.lock().unwrap().restore_resource(r2);
                     ExplorerToOrchestrator::CombineResourceResponse { explorer_id: self.id, generated: Err(e) }
                 }
             }
@@ -224,7 +234,7 @@ impl Explorer{
 
     }
 
-    fn handle_generate_resource_request(&mut self, to_generate: BasicResourceType)->ExplorerToOrchestrator<Bag>{
+    fn handle_generate_resource_request(&mut self, to_generate: BasicResourceType)->ExplorerToOrchestrator<T>{
         let msg= ExplorerToPlanet::GenerateResourceRequest { explorer_id: self.id, resource: to_generate};
         let _ = self.planet_sender.send(msg);
 
@@ -244,7 +254,7 @@ impl Explorer{
                     }
                 }
             }
-        } else{
+        } else {
             ExplorerToOrchestrator::GenerateResourceResponse {
                 explorer_id: self.id,
                 generated: Err("No response from Planet". to_string()) 
@@ -252,7 +262,7 @@ impl Explorer{
         }
     }
 
-    fn handle_supported_combination_request(&self)->ExplorerToOrchestrator<Bag>{
+    fn handle_supported_combination_request(&self)->ExplorerToOrchestrator<T>{
         let msg = ExplorerToPlanet::SupportedCombinationRequest { explorer_id: self.id };
         let _ = self.planet_sender.send(msg);
 
@@ -269,7 +279,7 @@ impl Explorer{
         }
     }
 
-    fn handle_supported_resource_request(&self)->ExplorerToOrchestrator<Bag>{
+    fn handle_supported_resource_request(&self)->ExplorerToOrchestrator<T>{
         let req= ExplorerToPlanet::SupportedResourceRequest { explorer_id: self.id };
         let _ = self.planet_sender.send(req);
 
@@ -287,7 +297,7 @@ impl Explorer{
     }
 
     /// Stops the AI, wipes the bag, and starts a fresh AI cycle.
-    fn handle_reset_explorer_ai(&self)->ExplorerToOrchestrator<Bag>{
+    fn handle_reset_explorer_ai(&self)->ExplorerToOrchestrator<T>{
         log::info!("[Explorer #{}] Resetting autonomous AI", self.id);
 
         // Tell running thread to exit
@@ -301,7 +311,7 @@ impl Explorer{
         }
 
         // Wipe the bag
-        *self.bag.lock().unwrap() = Bag::new();
+        self.bag.lock().unwrap().reset();
 
         // Start a fresh thread
         self.ai_running.store(true, Ordering::SeqCst);
@@ -310,14 +320,14 @@ impl Explorer{
         ExplorerToOrchestrator::ResetExplorerAIResult { explorer_id: self.id }
     }
 
-    fn handle_stop_explorer_ai(&self)->ExplorerToOrchestrator<Bag>{
+    fn handle_stop_explorer_ai(&self)->ExplorerToOrchestrator<T>{
         //stop autonomous AI
         self.ai_running.store(false, Ordering::SeqCst);
         log::info!("[Explorer #{}:] Stoping autonomous AI", self.id);
         ExplorerToOrchestrator::StopExplorerAIResult { explorer_id: self.id }
     }
 
-    fn handle_start_explorer_ai(&self)->ExplorerToOrchestrator<Bag>{
+    fn handle_start_explorer_ai(&self)->ExplorerToOrchestrator<T>{
         //Check if AI is already running
         if self.ai_running
             .compare_exchange(false, true, Ordering::SeqCst,Ordering::SeqCst)
@@ -351,7 +361,7 @@ impl Explorer{
         &mut self,
         sender_to_new_planet: Option<Sender<ExplorerToPlanet>>,
         planet_id: ID,
-    )->ExplorerToOrchestrator<Bag>{
+    )->ExplorerToOrchestrator<T>{
         if let Some(new_planet_sender)= sender_to_new_planet{
             self.planet_sender = new_planet_sender;
         }
@@ -359,12 +369,15 @@ impl Explorer{
         ExplorerToOrchestrator::MovedToPlanetResult { explorer_id: self.id, planet_id : self.current_planet_id}
     }
 
-    fn handle_current_planet_request(&self)->ExplorerToOrchestrator<Bag>{
+    fn handle_current_planet_request(&self)->ExplorerToOrchestrator<T>{
         ExplorerToOrchestrator::CurrentPlanetResult { explorer_id: self.id, planet_id: self.current_planet_id}
     }
 
-    fn handle_bag_content_request(&self)->ExplorerToOrchestrator<Bag>{
-        ExplorerToOrchestrator::BagContentResponse { explorer_id: self.id, bag_content: self.bag.lock().unwrap().clone() }
+    fn handle_bag_content_request(&self)->ExplorerToOrchestrator<T>{
+        ExplorerToOrchestrator::BagContentResponse { 
+            explorer_id: self.id, 
+            bag_content: T::from(self.bag.lock().unwrap().to_summary())
+        }
     }
 
 }
@@ -381,6 +394,13 @@ impl Bag{
             basic_resource_instances,
             complex_resource_instances,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.basic_resources.clear();
+        self.complex_resources.clear();
+        self.basic_resource_instances.clear();
+        self.complex_resource_instances.clear();
     }
 
     pub fn insert_basic_resource_in_bag(&mut self, resource: BasicResource){
@@ -409,15 +429,20 @@ impl Bag{
         self.complex_resources.entry(resource_type).and_modify(|c| *c -= 1);
         Some(instance) 
     }
-}
 
-impl Clone for Bag{
-    fn clone(&self) -> Self {
-        Bag {
+    pub fn to_summary(&self) -> BagSummary {
+        BagSummary {
             basic_resources: self.basic_resources.clone(),
             complex_resources: self.complex_resources.clone(),
-            basic_resource_instances: HashMap::new(),
-            complex_resource_instances: HashMap::new(),
+        }
+    }
+
+    /// Restores a generic resource back to the bag.
+    /// Used when combination fails and the planet returns the resources.
+    pub fn restore_resource(&mut self, resource: GenericResource) {
+        match resource {
+            GenericResource::BasicResources(br) => self.insert_basic_resource_in_bag(br),
+            GenericResource::ComplexResources(cr) => self.insert_complex_resource_in_bag(cr),
         }
     }
 }
@@ -448,8 +473,8 @@ enum Phase {
 }
 
 fn plan_for(goal: ComplexResourceType) -> GoalPlan {
-    use BasicResourceType::{Hydrogen, Oxygen, Carbon, Silicon};
-    use ComplexResourceType::{Water, Diamond, Life, Robot, Dolphin, AIPartner};
+    use BasicResourceType::*;
+    use ComplexResourceType::*;
     let (basics, combos) = match goal {
         ComplexResourceType::Water     => (vec![Hydrogen, Oxygen], vec![Water]),
         ComplexResourceType::Diamond   => (vec![Carbon, Carbon], vec![Diamond]),
@@ -465,7 +490,7 @@ fn pick_best_goal(
     supported_basics: &HashSet<BasicResourceType>,
     supported_combos: &HashSet<ComplexResourceType>,
 ) -> GoalPlan {
-    use ComplexResourceType::{Water, Diamond, Life, Robot, Dolphin, AIPartner};
+    use ComplexResourceType::*;
     for goal in [AIPartner, Robot, Dolphin, Life, Diamond, Water] {
         let plan = plan_for(goal);
         let basics_ok = plan.basics_needed.iter().all(|b| supported_basics.contains(b));
@@ -492,6 +517,7 @@ fn autonomous_ai(
     let mut supported_combos = HashSet::new();
     let mut remaining_basics = VecDeque::new();
     let mut remaining_combos = VecDeque::new();
+    let mut retry_count = 0; // Track consecutive failures
 
     while ai_running.load(Ordering::SeqCst) {
         match phase {
@@ -526,48 +552,94 @@ fn autonomous_ai(
                     let msg= ExplorerToPlanet::GenerateResourceRequest { explorer_id: id, resource };
                     let _ = planet_sender.send(msg); 
 
-                    if let Ok(PlanetToExplorer::GenerateResourceResponse { resource: Some(r) })
-                        = planet_receiver.recv(){
+                    match planet_receiver.recv() {
+                        Ok(PlanetToExplorer::GenerateResourceResponse { resource: Some(r) }) => {
+                            // Success: got the resource
                             bag.lock().unwrap().insert_basic_resource_in_bag(r);
                             remaining_basics.pop_front();
+                            retry_count = 0; // Reset retry counter
+                        }
+                        Ok(PlanetToExplorer::GenerateResourceResponse { resource: None }) => {
+                            // Failure: planet couldn't generate (no energy)
+                            retry_count += 1;
+                            
+                            if retry_count >= 10 {
+                                // Max retries exceeded: give up on this resource, skip to next
+                                log::warn!("[Explorer #{}] Failed to generate {:?} after 10 retries", id, resource);
+                                remaining_basics.pop_front();
+                                retry_count = 0;
+                            } else {
+                                // Wait before retrying (exponential backoff: 50ms → 500ms)
+                                let backoff = Duration::from_millis(50 * retry_count as u64);
+                                thread::sleep(backoff);
+                            }
+                        }
+                        Err(e) => {
+                            // Channel error: bail
+                            log::error!("[Explorer #{}] Recv error in Collect phase: {:?}", id, e);
+                            phase = Phase::Scout; // Reset to scout and try again
+                        }
+                        _ => {} //Ignore unexpected messages
                     }
-                }  else {
-                        phase = Phase::Craft;
-                }    
+                } else {
+                    phase = Phase::Craft;
+                }
             }
             Phase::Craft => {
                 if let Some(c) = remaining_combos.front(){
-                    let req= build_request(&mut bag.lock().unwrap(), *c);
+                    let req = build_request(&mut bag.lock().unwrap(), *c);
 
                     match req {
                         None => {
-                            // ingredients missing — skip this step
+                            // Ingredients missing — skip this combination
                             remaining_combos.pop_front();
                         }
-                        Some(req)=>{
+                        Some(req) => {
                             let msg = ExplorerToPlanet::CombineResourceRequest { 
                                 explorer_id: id,
                                 msg: req, 
                             };
                             let _ = planet_sender.send(msg);
 
-                            if let Ok(PlanetToExplorer::CombineResourceResponse { complex_response: Ok(r) })
-                            = planet_receiver.recv()
-                            {
-                                bag.lock().unwrap().insert_complex_resource_in_bag(r);
-                                remaining_combos.pop_front();
-                            }
-                            // if Err response: do nothing, retry next iteration
-                            }
-                    }
+                            match planet_receiver.recv() {
 
+                                Ok(PlanetToExplorer::CombineResourceResponse { complex_response: Ok(r) }) => {
+                                    // Success: combination completed
+                                    bag.lock().unwrap().insert_complex_resource_in_bag(r);
+                                    remaining_combos.pop_front();
+                                }
+
+                                Ok(PlanetToExplorer::CombineResourceResponse { complex_response: Err((msg,r1,r2)) }) => {
+                                // FAILURE case: Planet sends CombineResourceResponse with Err result
+                                // Planet returned the resources!
+                                log::warn!("[Explorer #{}] Combination failed: {}", id, msg);
+                                
+                                // Put them back in bag
+                                bag.lock().unwrap().restore_resource(r1);
+                                bag.lock().unwrap().restore_resource(r2);
+
+                                }
+
+                                // CHANNEL ERROR case: Something broke with the channel
+                                Err(e) => {
+                                    log::error!("[Explorer #{}] Recv error in Craft phase: {:?}", id, e);
+                                    phase = Phase::Scout;
+                                }
+
+                                // UNEXPECTED MESSAGE: Planet sent something else
+                                _ => {
+                                    log::error!("[Explorer #{}] Unexpected response in Craft phase", id);
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    phase = Phase::Scout; 
+                    // All combinations done - back to scout for next goal
+                    phase = Phase::Scout;
                 }
             }
         }
     }
-
 }
 
 fn build_request(bag: &mut Bag, combo: ComplexResourceType)->Option<ComplexResourceRequest>{
