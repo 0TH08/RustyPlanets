@@ -1,5 +1,4 @@
 #[allow(unused)]
-
 use common_game::components::resource::{BasicResource, BasicResourceType, Combinator, ComplexResource, ComplexResourceRequest, Generator, GenericResource };
 use common_game::components::planet::{Planet, PlanetAI, PlanetState, PlanetType, DummyPlanetState};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
@@ -57,9 +56,22 @@ impl PlanetAI for RustEzeAI {
                     Some(PlanetToExplorer::GenerateResourceResponse { resource: None })
                 }
             }
-            ExplorerToPlanet::CombineResourceRequest { .. } => {
-                //this planet cannot combine complex resources
-                None
+            ExplorerToPlanet::CombineResourceRequest { explorer_id: _, msg } => {
+                let basic = |res| GenericResource::BasicResources(res);
+                let complex = |res| GenericResource::ComplexResources(res);
+
+                let (lhs, rhs) = match msg {
+                    ComplexResourceRequest::Water(h, o) => (basic(BasicResource::Hydrogen(h)), basic(BasicResource::Oxygen(o))),
+                    ComplexResourceRequest::Diamond(c1, c2) => (basic(BasicResource::Carbon(c1)), basic(BasicResource::Carbon(c2))),
+                    ComplexResourceRequest::Life(w, c) => (complex(ComplexResource::Water(w)), basic(BasicResource::Carbon(c))),
+                    ComplexResourceRequest::Robot(s, l) => (basic(BasicResource::Silicon(s)), complex(ComplexResource::Life(l))),
+                    ComplexResourceRequest::Dolphin(w, l) => (complex(ComplexResource::Water(w)), complex(ComplexResource::Life(l))),
+                    ComplexResourceRequest::AIPartner(r, d) => (complex(ComplexResource::Robot(r)), complex(ComplexResource::Diamond(d))),
+                };
+
+                Some(PlanetToExplorer::CombineResourceResponse {
+                    complex_response: Err(("RustEze (Type D) does not support resource combination".to_string(), lhs, rhs)),
+                })
             }
             ExplorerToPlanet::AvailableEnergyCellRequest { .. } => {
                 Some(PlanetToExplorer::AvailableEnergyCellResponse {

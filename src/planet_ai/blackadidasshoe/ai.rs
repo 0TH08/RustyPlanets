@@ -50,8 +50,8 @@ impl PlanetAI for BlackAdidasShoe {
         _generator: &Generator,
         _combinator: &Combinator,
     ) -> Option<Rocket> {
-        log_asteroid_impact(String::from("No rocket usable to defend"), state.id());
-        state.take_rocket()
+        log_asteroid_impact(String::from("Type D planet — no rocket defense available"), state.id());
+        None
     }
 
     fn handle_internal_state_req(

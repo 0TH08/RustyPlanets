@@ -70,6 +70,12 @@ pub struct SimStatus {
     pub speed: AtomicU64, // f32 stored as bits for atomic access
 }
 
+impl Default for SimStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimStatus {
     pub fn new() -> Self {
         Self {
@@ -109,6 +115,17 @@ impl SimStatus {
 }
 
 // ── Planet telemetry ─────────────────────────────────────────────────
+
+#[allow(dead_code)]
+pub struct ExplorerEntry {
+    pub telemetry: ExplorerTelemetry,
+}
+
+impl ExplorerEntry {
+    pub fn snapshot(&self) -> ExplorerSnapshot {
+        self.telemetry.snapshot()
+    }
+}
 
 #[allow(dead_code)]
 pub struct PlanetEntry {
@@ -181,7 +198,7 @@ pub struct ExplorerSnapshot {
 pub struct TelemetryHub {
     pub sim_status: Arc<SimStatus>,
     pub planets: Arc<RwLock<HashMap<u32, PlanetEntry>>>,
-    pub explorer: Arc<RwLock<Option<ExplorerTelemetry>>>,
+    pub explorers: Arc<RwLock<HashMap<u32, ExplorerEntry>>>,
 }
 
 impl TelemetryHub {
@@ -189,7 +206,7 @@ impl TelemetryHub {
         Self {
             sim_status: Arc::new(SimStatus::new()),
             planets: Arc::new(RwLock::new(HashMap::new())),
-            explorer: Arc::new(RwLock::new(None)),
+            explorers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -198,9 +215,9 @@ impl TelemetryHub {
     }
 
     /// Register an explorer for telemetry tracking.
-    pub fn register_explorer(&self, telemetry: ExplorerTelemetry) {
-        let mut explorer = self.explorer.write().unwrap();
-        *explorer = Some(telemetry);
+    pub fn register_explorer(&self, id: u32, telemetry: ExplorerTelemetry) {
+        let mut explorers = self.explorers.write().unwrap();
+        explorers.insert(id, ExplorerEntry { telemetry });
     }
 
     /// Register a planet for telemetry tracking.

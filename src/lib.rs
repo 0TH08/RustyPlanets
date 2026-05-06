@@ -9,6 +9,8 @@ pub mod telemetry;
 pub mod planet_telemetry;
 pub mod broadcast_log;
 
+pub use common_game;
+
 pub use planet_ai::{RustyPlanet, RustyPlanetId};
 pub use telemetry::PlanetKind;
 
@@ -63,22 +65,43 @@ pub fn create_planet(
                 .map_err(|e| format!("Failed to create planet: {e}"))?
         }
         PlanetType::Luna4 => {
-            return Err("Luna4 planet creation not yet implemented".to_string());
+            planet_ai::luna4::Luna4::new(id)
+                .map_err(|e| format!("Failed to create Luna4 planet handle: {e}"))?
+                .create_planet(rx_orchestrator, tx_orchestrator, rx_explorer)
+                .map_err(|e| format!("Failed to create planet: {e}"))?
         }
         PlanetType::BlackAdidasShoe => {
-            return Err("BlackAdidasShoe planet creation not yet implemented".to_string());
+            planet_ai::blackadidasshoe::planet::create_planet(
+                rx_orchestrator, tx_orchestrator, rx_explorer, id,
+            )?
         }
         PlanetType::ImmutableCosmicBorrow => {
-            return Err("ImmutableCosmicBorrow planet creation not yet implemented".to_string());
+            use std::time::Duration;
+            planet_ai::immutablecosmicborrow::create_planet(
+                false,       // random_mode
+                1.0,         // basic_gen_coeff
+                1.0,         // complex_gen_coeff
+                Duration::from_secs(30), // half_life
+                Duration::from_secs(1),  // min_time_constant
+                id,
+                (rx_orchestrator, tx_orchestrator),
+                rx_explorer,
+            )?
         }
         PlanetType::Rusteze => {
-            return Err("Rusteze planet creation not yet implemented".to_string());
+            planet_ai::rusteze::ai::create_planet(
+                id, rx_orchestrator, tx_orchestrator, rx_explorer,
+            )?
         }
         PlanetType::Crabtorio => {
-            return Err("Crabtorio planet creation not yet implemented".to_string());
+            planet_ai::crabtorio::ai::create_planet(
+                id, (rx_orchestrator, tx_orchestrator), rx_explorer,
+            )?
         }
         PlanetType::Orbitron => {
-            return Err("Orbitron planet creation not yet implemented".to_string());
+            planet_ai::orbitron::ai::create_planet(
+                id, rx_orchestrator, tx_orchestrator, rx_explorer,
+            )?
         }
     };
 
@@ -98,6 +121,7 @@ pub fn create_planet(
 /// The planet's internal state is accessible via `TelemetryHub` for
 /// real-time observation by the GUI server. The `ai_running` flag
 /// allows the GUI to track whether this planet's AI is active.
+#[allow(clippy::too_many_arguments)]
 pub fn create_planet_with_telemetry(
     id: u32,
     name: String,
@@ -137,7 +161,7 @@ pub fn create_planet_with_telemetry(
         None::<[(&str, String); 0]>,
     );
 
-    // For now, only Skycartel is fully implemented
+    // For now, only Skycartel is fully implemented with telemetry
     let (planet, ai_state) = match planet_type {
         PlanetType::Skycartel => {
             let planet_impl = RustyPlanet::new(id)
@@ -146,8 +170,16 @@ pub fn create_planet_with_telemetry(
                 .create_planet_with_ai_state(rx_orchestrator, tx_orchestrator, rx_explorer)
                 .map_err(|e| format!("Failed to create planet: {e}"))?
         }
+        PlanetType::Luna4 => {
+            let ai = planet_ai::luna4::Luna4::new(id)
+                .map_err(|e| format!("Failed to create Luna4 planet handle: {e}"))?;
+            let planet = ai.create_planet(rx_orchestrator, tx_orchestrator, rx_explorer)
+                .map_err(|e| format!("Failed to create planet: {e}"))?;
+            // TODO: wire telemetry for Luna4
+            return Ok(planet);
+        }
         _ => {
-            return Err(format!("{:?} planet creation not yet implemented", planet_type));
+            return Err(format!("{:?} planet creation with telemetry not yet implemented", planet_type));
         }
     };
 

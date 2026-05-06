@@ -133,6 +133,44 @@ impl PlanetAI for AI {
             },
         }
     }
+
+    fn on_explorer_arrival(
+        &mut self,
+        state: &mut PlanetState,
+        _generator: &Generator,
+        _combinator: &Combinator,
+        explorer_id: ID,
+    ) {
+        log::info!("Crabtorio: Explorer {explorer_id} arrived at planet {}", state.id());
+    }
+
+    fn on_explorer_departure(
+        &mut self,
+        state: &mut PlanetState,
+        _generator: &Generator,
+        _combinator: &Combinator,
+        explorer_id: ID,
+    ) {
+        log::info!("Crabtorio: Explorer {explorer_id} departed from planet {}", state.id());
+    }
+
+    fn on_start(
+        &mut self,
+        state: &PlanetState,
+        _generator: &Generator,
+        _combinator: &Combinator,
+    ) {
+        log::info!("Crabtorio: Planet AI started for planet {}", state.id());
+    }
+
+    fn on_stop(
+        &mut self,
+        state: &PlanetState,
+        _generator: &Generator,
+        _combinator: &Combinator,
+    ) {
+        log::info!("Crabtorio: Planet AI stopped for planet {}", state.id());
+    }
 }
 
 use common_game::components::planet::Planet;
@@ -149,14 +187,7 @@ pub fn create_planet(
         PlanetType::B,
         Box::new(AI),
         vec![BasicResourceType::Hydrogen],
-        vec![
-            ComplexResourceType::AIPartner,
-            ComplexResourceType::Diamond,
-            ComplexResourceType::Dolphin,
-            ComplexResourceType::Life,
-            ComplexResourceType::Robot,
-            ComplexResourceType::Water,
-        ],
+        vec![ComplexResourceType::Water],
         orchestrator_channels,
         explorers_receiver,
     )

@@ -21,6 +21,9 @@ pub struct SkycartelState {
 
     pub generation_history: Vec<BasicResourceType>,
     pub present_explorers: HashMap<u32, Instant>,
+    
+    pub total_cells: usize,
+    pub charged_cells: usize,
 
     pub stats: OperationalStats,
 }
@@ -34,8 +37,15 @@ impl SkycartelState {
             phase_start_time: Instant::now(),
             generation_history: Vec::new(),
             present_explorers: HashMap::new(),
+            total_cells: 5,
+            charged_cells: 0,
             stats: OperationalStats::new(),
         }
+    }
+    
+    pub(crate) fn update_cells(&mut self, total: usize, charged: usize) {
+        self.total_cells = total;
+        self.charged_cells = charged;
     }
 
     /// Skycartel uses a single stable phase.
@@ -104,6 +114,8 @@ pub struct OperationalStats {
     pub explorer_departures: usize,
     pub rockets_built: usize,
     pub asteroids_deflected: usize,
+    pub combinations_attempted: usize,
+    pub combinations_succeeded: usize,
     pub errors_encountered: usize,
 }
 

@@ -6,7 +6,7 @@ interface SimulationState extends SimulationStatus {
   isBusy: boolean
   setRunState: (runState: SimulationRunState) => void
   setSpeed: (speed: number) => void
-  incrementTick: () => void
+  setTick: (tick: number) => void
   setBusy: (busy: boolean) => void
 }
 
@@ -17,7 +17,6 @@ export const useSimulationStore = create<SimulationState>((set) => ({
   isBusy: false,
   setRunState: (runState) => set({ runState }),
   setSpeed: (speed) => set({ speed }),
-  incrementTick: () => set((state) => ({ tick: state.tick + 1 })),
+  setTick: (tick) => set({ tick }),
   setBusy: (busy) => set({ isBusy: busy }),
 }))
-

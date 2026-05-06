@@ -1,38 +1,46 @@
 import type { SimulationRunState, SimulationStatus } from '../types/simulation'
 
-// Temporary mock implementation.
-// Later this can be replaced with real HTTP/WebSocket calls to the Rust backend.
-
-let currentStatus: SimulationStatus = {
-  runState: 'idle',
-  tick: 0,
-  speed: 1,
-}
+const API_BASE = 'http://localhost:8080/api'
 
 export async function getSimulationStatus(): Promise<SimulationStatus> {
-  // Simulate a tiny network delay
-  await new Promise((resolve) => setTimeout(resolve, 50))
-  return currentStatus
+  const res = await fetch(`${API_BASE}/simulation/status`)
+  return res.json()
 }
 
 export async function setSimulationRunState(runState: SimulationRunState): Promise<SimulationStatus> {
-  await new Promise((resolve) => setTimeout(resolve, 50))
-  currentStatus = { ...currentStatus, runState }
-  return currentStatus
+  const res = await fetch(`${API_BASE}/simulation/run-state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runState }),
+  })
+  return res.json()
 }
 
 export async function stepSimulation(): Promise<SimulationStatus> {
-  await new Promise((resolve) => setTimeout(resolve, 50))
-  currentStatus = {
-    ...currentStatus,
-    tick: currentStatus.tick + 1,
-  }
-  return currentStatus
+  const res = await fetch(`${API_BASE}/simulation/step`, { method: 'POST' })
+  return res.json()
 }
 
 export async function setSimulationSpeed(speed: number): Promise<SimulationStatus> {
-  await new Promise((resolve) => setTimeout(resolve, 50))
-  currentStatus = { ...currentStatus, speed }
-  return currentStatus
+  const res = await fetch(`${API_BASE}/simulation/speed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ speed }),
+  })
+  return res.json()
 }
 
+export async function resetSimulation(): Promise<SimulationStatus> {
+  const res = await fetch(`${API_BASE}/simulation/reset`, { method: 'POST' })
+  return res.json()
+}
+
+export async function sendSunray(planetId: number): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/sunray/${planetId}`, { method: 'POST' })
+  return res.json()
+}
+
+export async function sendAsteroid(planetId: number): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/asteroid/${planetId}`, { method: 'POST' })
+  return res.json()
+}

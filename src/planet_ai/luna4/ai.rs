@@ -8,6 +8,7 @@ use common_game::components::planet::{PlanetAI, PlanetState, DummyPlanetState};
 use common_game::components::resource::{Generator, Combinator, BasicResourceType};
 use common_game::components::rocket::Rocket;
 use common_game::components::sunray::Sunray;
+use common_game::logging::{ActorType, Channel, EventType, LogEvent, Participant, Payload};
 use common_game::protocols::planet_explorer::*;
 use common_game::utils::ID;
 
@@ -86,15 +87,35 @@ impl PlanetAI for Luna4AI {
         self.stats.record_sunray_received();
         self.update_phase();
         state.charge_cell(sunray);
+        LogEvent::new(
+            Some(Participant::new(ActorType::Planet, state.id())),
+            Some(Participant::new(ActorType::Orchestrator, 0u32)),
+            EventType::MessageOrchestratorToPlanet,
+            Channel::Debug,
+            Payload::from([
+                ("action".to_string(), "sunray_charged".to_string()),
+                ("phase".to_string(), format!("{:?}", self.phase)),
+            ]),
+        ).emit();
     }
 
     fn handle_asteroid(
         &mut self,
-        _state: &mut PlanetState,
+        state: &mut PlanetState,
         _generator: &Generator,
         _combinator: &Combinator,
     ) -> Option<Rocket> {
         self.update_phase();
+        LogEvent::new(
+            Some(Participant::new(ActorType::Planet, state.id())),
+            Some(Participant::new(ActorType::Orchestrator, 0u32)),
+            EventType::InternalPlanetAction,
+            Channel::Warning,
+            Payload::from([
+                ("action".to_string(), "asteroid_no_rocket_type_d".to_string()),
+                ("phase".to_string(), format!("{:?}", self.phase)),
+            ]),
+        ).emit();
         None // Type D: No rockets
     }
 
@@ -133,6 +154,17 @@ impl PlanetAI for Luna4AI {
                 let available = self.get_available_basic();
                 if !available.contains(&resource) {
                     self.stats.record_failed_generation();
+                    LogEvent::new(
+                        Some(Participant::new(ActorType::Planet, state.id())),
+                        None,
+                        EventType::MessageExplorerToPlanet,
+                        Channel::Warning,
+                        Payload::from([
+                            ("action".to_string(), "generate_unavailable_resource".to_string()),
+                            ("resource".to_string(), format!("{:?}", resource)),
+                            ("phase".to_string(), format!("{:?}", self.phase)),
+                        ]),
+                    ).emit();
                     return Some(PlanetToExplorer::GenerateResourceResponse {
                         resource: None,
                     });
@@ -142,24 +174,63 @@ impl PlanetAI for Luna4AI {
                 if let Some((cell, _)) = state.full_cell() {
                     if let Ok(generated) = generator.try_make(resource, cell) {
                         self.stats.record_successful_generation();
+                        LogEvent::new(
+                            Some(Participant::new(ActorType::Planet, state.id())),
+                            None,
+                            EventType::MessageExplorerToPlanet,
+                            Channel::Info,
+                            Payload::from([
+                                ("action".to_string(), "generate_success".to_string()),
+                                ("resource".to_string(), format!("{:?}", resource)),
+                            ]),
+                        ).emit();
                         Some(PlanetToExplorer::GenerateResourceResponse {
                             resource: Some(generated),
                         })
                     } else {
                         self.stats.record_failed_generation();
+                        LogEvent::new(
+                            Some(Participant::new(ActorType::Planet, state.id())),
+                            None,
+                            EventType::MessageExplorerToPlanet,
+                            Channel::Error,
+                            Payload::from([
+                                ("action".to_string(), "generate_failed".to_string()),
+                                ("resource".to_string(), format!("{:?}", resource)),
+                            ]),
+                        ).emit();
                         Some(PlanetToExplorer::GenerateResourceResponse {
                             resource: None,
                         })
                     }
                 } else {
                     self.stats.record_failed_generation();
+                    LogEvent::new(
+                        Some(Participant::new(ActorType::Planet, state.id())),
+                        None,
+                        EventType::MessageExplorerToPlanet,
+                        Channel::Warning,
+                        Payload::from([
+                            ("action".to_string(), "generate_no_charge".to_string()),
+                            ("resource".to_string(), format!("{:?}", resource)),
+                        ]),
+                    ).emit();
                     Some(PlanetToExplorer::GenerateResourceResponse {
                         resource: None,
                     })
                 }
             }
             ExplorerToPlanet::CombineResourceRequest { explorer_id: _, msg } => {
-                self.stats.record_failed_generation();
+                self.stats.record_failed_combination();
+                LogEvent::new(
+                    Some(Participant::new(ActorType::Planet, state.id())),
+                    None,
+                    EventType::MessageExplorerToPlanet,
+                    Channel::Warning,
+                    Payload::from([
+                        ("action".to_string(), "combine_not_supported_type_d".to_string()),
+                    ]),
+                ).emit();
                 let basic = |res| common_game::components::resource::GenericResource::BasicResources(res);
                 
                 // Retrieve the explorer's generic resource
@@ -225,18 +296,36 @@ impl PlanetAI for Luna4AI {
 
     fn on_start(
         &mut self,
-        _state: &PlanetState,
+        state: &PlanetState,
         _generator: &Generator,
         _combinator: &Combinator,
     ) {
+        LogEvent::new(
+            Some(Participant::new(ActorType::Planet, state.id())),
+            Some(Participant::new(ActorType::Orchestrator, 0u32)),
+            EventType::InternalPlanetAction,
+            Channel::Info,
+            Payload::from([
+                ("action".to_string(), "planet_ai_started".to_string()),
+            ]),
+        ).emit();
     }
 
     fn on_stop(
         &mut self,
-        _state: &PlanetState,
+        state: &PlanetState,
         _generator: &Generator,
         _combinator: &Combinator,
     ) {
+        LogEvent::new(
+            Some(Participant::new(ActorType::Planet, state.id())),
+            Some(Participant::new(ActorType::Orchestrator, 0u32)),
+            EventType::InternalPlanetAction,
+            Channel::Info,
+            Payload::from([
+                ("action".to_string(), "planet_ai_stopped".to_string()),
+            ]),
+        ).emit();
     }
 }
 
@@ -258,6 +347,7 @@ enum Luna4Phase {
 pub struct Luna4Stats {
     pub successful_generations: usize,
     pub failed_generations: usize,
+    pub failed_combinations: usize,
     pub sunrays_received: usize,
     pub explorer_messages_processed: usize,
 }
@@ -273,6 +363,10 @@ impl Luna4Stats {
     
     pub fn record_failed_generation(&mut self) {
         self.failed_generations += 1;
+    }
+    
+    pub fn record_failed_combination(&mut self) {
+        self.failed_combinations += 1;
     }
     
     pub fn record_sunray_received(&mut self) {

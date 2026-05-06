@@ -462,3 +462,29 @@ impl PlanetAI for Orbitron {
         .emit();
     }
 }
+
+use common_game::components::planet::{Planet, PlanetType};
+use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
+use crossbeam_channel::{Receiver, Sender};
+
+/// Creates and initializes a new Orbitron planet.
+///
+/// Orbitron is a Type A planet: 5 energy cells, at most 1 generation recipe,
+/// rockets allowed, no combination recipes.
+pub fn create_planet(
+    id: ID,
+    rx_orchestrator: Receiver<OrchestratorToPlanet>,
+    tx_orchestrator: Sender<PlanetToOrchestrator>,
+    rx_explorer: Receiver<ExplorerToPlanet>,
+) -> Result<Planet, String> {
+    let ai = Orbitron::new(id);
+    Planet::new(
+        id,
+        PlanetType::A,
+        Box::new(ai),
+        vec![BasicResourceType::Hydrogen],
+        vec![],
+        (rx_orchestrator, tx_orchestrator),
+        rx_explorer,
+    )
+}

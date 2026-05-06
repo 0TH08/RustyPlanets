@@ -4,7 +4,6 @@
 //! that are used for monitoring and debugging purposes.
 
 /// Statistics tracking for Luna4 operations
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct Luna4Stats {

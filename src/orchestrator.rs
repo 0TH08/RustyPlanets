@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 
 use common_game::components::forge::Forge;
 use common_game::components::planet::DummyPlanetState;
@@ -9,61 +9,97 @@ use crossbeam_channel::{Receiver, Sender};
 
 use common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
+use common_game::protocols::planet_explorer::ExplorerToPlanet;
 use crate::explorer::Bag;
 use crate::telemetry::TelemetryHub;
 
-pub struct Orchestrator {
-    planet_senders: HashMap<u32, Sender<OrchestratorToPlanet>>,
-    planet_receiver: Receiver<PlanetToOrchestrator>,
-    #[allow(dead_code)]
-    explorer_sender: Sender<OrchestratorToExplorer>,
-    #[allow(dead_code)]
-    explorer_receiver: Receiver<ExplorerToOrchestrator<Bag>>,
-    forge: Forge,
-    running: Arc<AtomicBool>,
-    step_rx: Option<Receiver<()>>,
-    telemetry: Option<TelemetryHub>,
-    tick: u64,
+/// Validates planet message sequence protocol.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PlanetState {
+    Idle,
+    Starting,
+    Running,
+    Stopping,
 }
 
-pub struct StopHandle{
+/// Validates explorer message sequence protocol.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ExplorerState {
+    Idle,
+    Starting,
+    Running,
+    Stopping,
+}
+
+pub struct Orchestrator {
+    planet_senders: HashMap<u32, Sender<OrchestratorToPlanet>>,
+    planet_explorer_senders: HashMap<u32, Sender<ExplorerToPlanet>>,
+    planet_receiver: Receiver<PlanetToOrchestrator>,
+    explorer_senders: HashMap<u32, Sender<OrchestratorToExplorer>>,
+    explorer_receiver: Receiver<ExplorerToOrchestrator<Bag>>,
+    forge: Option<Forge>,
     running: Arc<AtomicBool>,
+    step_rx: Option<Receiver<()>>,
+    telemetry: Option<Arc<TelemetryHub>>,
+    tick: Arc<AtomicU64>,
+    explorer_planet: HashMap<u32, u32>,
+    explorer_alive: HashMap<u32, bool>,
+    planet_alive: HashMap<u32, bool>,
+    planet_states: HashMap<u32, PlanetState>,
+    explorer_states: HashMap<u32, ExplorerState>,
+}
+
+pub struct StopHandle {
+    running: Arc<AtomicBool>,
+    tick: Arc<AtomicU64>,
 }
 
 // ── Core ──────────────────────────────────────────────────────────────────────
 
 impl Orchestrator {
 
-    pub fn new(
+pub fn new(
         planet_senders: HashMap<u32, Sender<OrchestratorToPlanet>>,
+        planet_explorer_senders: HashMap<u32, Sender<ExplorerToPlanet>>,
         planet_receiver: Receiver<PlanetToOrchestrator>,
-        explorer_sender: Sender<OrchestratorToExplorer>,
+        explorer_senders: HashMap<u32, Sender<OrchestratorToExplorer>>,
         explorer_receiver: Receiver<ExplorerToOrchestrator<Bag>>,
     ) -> Result<Self, String> {
-        let forge = Forge::new()?;
         let running = Arc::new(AtomicBool::new(false));
 
         Ok(Self {
             planet_senders,
+            planet_explorer_senders,
             planet_receiver,
-            explorer_sender,
+            explorer_senders,
             explorer_receiver,
-            forge,
+            forge: None,
             running,
             step_rx: None,
             telemetry: None,
-            tick: 0,
+            tick: Arc::new(AtomicU64::new(0)),
+            explorer_planet: HashMap::new(),
+            explorer_alive: HashMap::new(),
+            planet_alive: HashMap::new(),
+            planet_states: HashMap::new(),
+            explorer_states: HashMap::new(),
         })
     }
 
-    /// Builder: attach a step channel for single-step execution when paused.
+    fn get_forge(&mut self) -> &mut Forge {
+        if self.forge.is_none() {
+            self.forge = Some(Forge::new().expect("Failed to create forge"));
+        }
+        self.forge.as_mut().expect("Forge missing")
+    }
+
     pub fn with_step_channel(mut self, step_rx: Receiver<()>) -> Self {
         self.step_rx = Some(step_rx);
         self
     }
 
     /// Builder: attach a telemetry hub for real-time state observation.
-    pub fn with_telemetry(mut self, telemetry: TelemetryHub) -> Self {
+    pub fn with_telemetry(mut self, telemetry: Arc<TelemetryHub>) -> Self {
         self.telemetry = Some(telemetry);
         self
     }
@@ -76,7 +112,7 @@ impl Orchestrator {
 
     /// Returns the current tick count.
     pub fn tick(&self) -> u64 {
-        self.tick
+        self.tick.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Spawns the main simulation loop on a new thread.
@@ -84,13 +120,24 @@ impl Orchestrator {
     /// The loop runs until `StopHandle::stop()` is called or the running
     /// flag is set to false. Returns a handle that can control the loop.
     pub fn run(mut self) -> StopHandle {
+        // Initialize all planets and explorers
+        if let Err(e) = self.initialize() {
+            log::error!("Failed to initialize orchestrator: {e}");
+        }
+
         let running = Arc::clone(&self.running);
         let running_thread = Arc::clone(&running);
         let step_rx = self.step_rx.take();
         let telemetry = self.telemetry.take();
+        let tick_arc = Arc::clone(&self.tick);
 
         std::thread::spawn(move || {
+            eprintln!("[orchestrator thread] starting loop");
+            // Set running flag to true to start the simulation
+            running_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+
             while running_thread.load(std::sync::atomic::Ordering::SeqCst) {
+                eprintln!("[orchestrator thread] tick");
                 // if a step channel exists and we're paused, block until a step arrives
                 if let Some(ref rx) = step_rx {
                     while !running_thread.load(std::sync::atomic::Ordering::SeqCst) {
@@ -109,27 +156,38 @@ impl Orchestrator {
                 }
 
                 // send sunray to each planet
-                for &planet_id in self.planet_senders.keys() {
-                    let _ = self.send_sunray(planet_id);
-                }
+                // (deferred to planets - they generate their own energy)
+                // let planet_ids: Vec<u32> = self.planet_senders.keys().cloned().collect();
+                // for planet_id in planet_ids {
+                //     let _ = self.send_sunray(planet_id);
+                // }
 
-                // maybe send asteroid (~4% chance per tick)
-                if rand::random::<u8>() < 10 {
-                    let keys: Vec<u32> = self.planet_senders.keys().copied().collect();
-                    if !keys.is_empty() {
-                        let idx = (rand::random::<u32>() as usize) % keys.len();
-                        let planet_id = keys[idx];
-                        let _ = self.send_asteroid(planet_id);
-                    }
-                }
+                // maybe send asteroid (~5% chance per tick)
+                // (deferred - asteroids would need coordination)
+                // if rand::random::<f32>() < 0.05 {
+                //     let alive_planets: Vec<u32> = self.planet_alive
+                //         .iter()
+                //         .filter_map(|(&id, &alive)| if alive { Some(id) } else { None })
+                //         .collect();
+
+                //     if !alive_planets.is_empty() {
+                //         let idx = (rand::random::<u32>() as usize) % alive_planets.len();
+                //         let planet_id = alive_planets[idx];
+                //         let _ = self.send_asteroid(planet_id);
+                //         log::info!("Asteroid targeting planet {planet_id}");
+                //     }
+                // }
 
                 self.handle_planet_responses();
+                self.handle_explorer_responses();
 
-                self.tick += 1;
+                // increment tick counter
+                self.tick.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let current_tick = self.tick.load(std::sync::atomic::Ordering::SeqCst);
 
                 // update telemetry
                 if let Some(ref tel) = telemetry {
-                    tel.sim_status.set_tick(self.tick);
+                    tel.sim_status.set_tick(current_tick);
                 }
 
                 // sleep a bit between ticks
@@ -137,7 +195,7 @@ impl Orchestrator {
             }
         });
 
-        StopHandle { running }
+        StopHandle { running, tick: tick_arc }
     }
 }
 
@@ -156,37 +214,38 @@ impl StopHandle {
     pub fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::SeqCst)
     }
+
+    /// Returns the current tick count at the time of handle creation.
+    pub fn tick(&self) -> u64 {
+        self.tick.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 // ── Planet messaging ──────────────────────────────────────────────────────────
 
 impl Orchestrator {
 
-    pub fn send_sunray(&self, planet_id : u32) -> Result<(), String> {
-        //1- Get the sender for this planet
+    pub fn send_sunray(&mut self, planet_id : u32) -> Result<(), String> {
         let sender = self.planet_senders
             .get(&planet_id)
+            .cloned()
             .ok_or_else(|| format!("No sender found for planet {planet_id}"))?;
 
-        //2- Create sunray
-        let sunray = self.forge.generate_sunray();
+        let sunray = self.get_forge().generate_sunray();
 
-        //3- Send the sunray
         sender.send(OrchestratorToPlanet::Sunray(sunray))
             .map_err(|e| format!("Failed to send sunray: {e}"))?;
 
-        //4- Return Ok
         Ok(())
     }
 
-    pub fn send_asteroid(&self, planet_id : u32) -> Result<(), String> {
-        //1- Get the sender for this planet
+    pub fn send_asteroid(&mut self, planet_id : u32) -> Result<(), String> {
         let sender = self.planet_senders
             .get(&planet_id)
+            .cloned()
             .ok_or_else(|| format!("No sender found for planet {planet_id}"))?;
 
-        //2- Create asteroid
-        let asteroid = self.forge.generate_asteroid();
+        let asteroid = self.get_forge().generate_asteroid();
 
         //3- Send it
         sender.send(OrchestratorToPlanet::Asteroid(asteroid))
@@ -271,12 +330,27 @@ impl Orchestrator {
 
     fn handle_kill_planet_result(&mut self, planet_id : u32) {
         // planet was destroyed by an asteroid
-        // log it
         log::warn!("Planet {planet_id} has been destroyed by an asteroid");
+
+        // mark planet as not alive and update state
+        self.planet_alive.insert(planet_id, false);
+        self.planet_states.insert(planet_id, PlanetState::Idle);
 
         // remove planet_id from planet_senders
         self.planet_senders.remove(&planet_id);
-        
+        self.planet_explorer_senders.remove(&planet_id);
+
+        // find and terminate all explorers mapped to this planet
+        let explorers_to_kill: Vec<u32> = self.explorer_planet
+            .iter()
+            .filter_map(|(explorer_id, &pid)| if pid == planet_id { Some(*explorer_id) } else { None })
+            .collect();
+
+        for explorer_id in explorers_to_kill {
+            log::warn!("Terminating explorer {explorer_id} due to planet {planet_id} destruction");
+            let _ = self.kill_explorer(explorer_id);
+            self.explorer_planet.remove(&explorer_id);
+        }
     }
 
     // planet confirmed an explorer departed — log success or failure
@@ -288,17 +362,317 @@ impl Orchestrator {
     }
 
     // planet confirmed its AI has started
-    fn handle_start_planet_ai_result(&self, planet_id : u32) {
-        log::info!("Planet AI started for the planet {planet_id}");
+    fn handle_start_planet_ai_result(&mut self, planet_id : u32) {
+        if self.validate_planet_state_transition(planet_id, PlanetState::Running) {
+            log::info!("Planet AI started for planet {planet_id}");
+        }
     }
 
     // planet confirmed its AI has stopped
-    fn handle_stop_planet_ai_result(&self, planet_id : u32) {
-        log::info!("Planet AI stopped for the planet {planet_id}");
+    fn handle_stop_planet_ai_result(&mut self, planet_id : u32) {
+        if self.validate_planet_state_transition(planet_id, PlanetState::Stopping) {
+            log::info!("Planet AI stopped for planet {planet_id}");
+        }
     }
 
     // planet confirmed it has stopped
-    fn handle_stopped(&self, planet_id : u32) {
-        log::info!("Planet {planet_id} stopped");
+    fn handle_stopped(&mut self, planet_id : u32) {
+        if self.validate_planet_state_transition(planet_id, PlanetState::Idle) {
+            log::info!("Planet {planet_id} stopped");
+        }
+    }
+}
+
+// ── Explorer messaging ────────────────────────────────────────────────────────
+
+impl Orchestrator {
+
+    /// Send a message to a specific explorer
+    pub fn send_to_explorer(&self, explorer_id: u32, msg: OrchestratorToExplorer) -> Result<(), String> {
+        let sender = self.explorer_senders
+            .get(&explorer_id)
+            .ok_or_else(|| format!("No sender found for explorer {explorer_id}"))?;
+
+        sender.send(msg)
+            .map_err(|e| format!("Failed to send to explorer {explorer_id}: {e}"))
+    }
+
+    /// Send a message to an explorer via their planet's channel
+    pub fn send_to_explorer_via_planet(&self, explorer_id: u32, msg: ExplorerToPlanet) -> Result<(), String> {
+        let planet_id = self.explorer_planet
+            .get(&explorer_id)
+            .copied()
+            .ok_or_else(|| format!("Explorer {explorer_id} not mapped to any planet"))?;
+
+        let sender = self.planet_explorer_senders
+            .get(&planet_id)
+            .ok_or_else(|| format!("No explorer sender found for planet {planet_id}"))?;
+
+        sender.send(msg)
+            .map_err(|e| format!("Failed to send to explorer {explorer_id} via planet {planet_id}: {e}"))
+    }
+}
+
+// ── Explorer response handling ────────────────────────────────────────────────
+
+impl Orchestrator {
+
+    fn handle_explorer_responses(&mut self) {
+        while let Ok(msg) = self.explorer_receiver.try_recv() {
+            let _explorer_id = msg.explorer_id();
+            match msg {
+                ExplorerToOrchestrator::StartExplorerAIResult { explorer_id } => {
+                    self.handle_explorer_started(explorer_id);
+                }
+                ExplorerToOrchestrator::KillExplorerResult { explorer_id } => {
+                    self.handle_explorer_killed(explorer_id);
+                }
+                ExplorerToOrchestrator::ResetExplorerAIResult { explorer_id } => {
+                    log::debug!("Explorer {explorer_id} AI reset");
+                }
+                ExplorerToOrchestrator::StopExplorerAIResult { explorer_id } => {
+                    log::debug!("Explorer {explorer_id} AI stopped");
+                }
+                ExplorerToOrchestrator::MovedToPlanetResult { explorer_id, planet_id } => {
+                    self.handle_explorer_moved(explorer_id, planet_id);
+                }
+                ExplorerToOrchestrator::CurrentPlanetResult { explorer_id, planet_id } => {
+                    log::debug!("Explorer {explorer_id} is on planet {planet_id}");
+                }
+                ExplorerToOrchestrator::SupportedResourceResult { explorer_id, supported_resources } => {
+                    log::debug!("Explorer {explorer_id} supported resources: {supported_resources:?}");
+                }
+                ExplorerToOrchestrator::SupportedCombinationResult { explorer_id, combination_list } => {
+                    log::debug!("Explorer {explorer_id} supported combinations: {combination_list:?}");
+                }
+                ExplorerToOrchestrator::GenerateResourceResponse { explorer_id, generated } => {
+                    match generated {
+                        Ok(()) => log::debug!("Explorer {explorer_id} generated resource"),
+                        Err(e) => log::warn!("Explorer {explorer_id} failed to generate resource: {e}"),
+                    }
+                }
+                ExplorerToOrchestrator::CombineResourceResponse { explorer_id, generated } => {
+                    match generated {
+                        Ok(()) => log::debug!("Explorer {explorer_id} combined resource"),
+                        Err(e) => log::warn!("Explorer {explorer_id} failed to combine resource: {e}"),
+                    }
+                }
+                ExplorerToOrchestrator::BagContentResponse { explorer_id, bag_content } => {
+                    log::debug!("Explorer {explorer_id} bag content: {bag_content:?}");
+                }
+                ExplorerToOrchestrator::NeighborsRequest { explorer_id, current_planet_id } => {
+                    self.handle_neighbors_request(explorer_id, current_planet_id);
+                }
+                ExplorerToOrchestrator::TravelToPlanetRequest { explorer_id, current_planet_id, dst_planet_id } => {
+                    self.handle_travel_request(explorer_id, current_planet_id, dst_planet_id);
+                }
+            }
+        }
+    }
+
+    fn handle_explorer_started(&mut self, explorer_id: u32) {
+        if self.validate_explorer_state_transition(explorer_id, ExplorerState::Running) {
+            log::info!("Explorer {explorer_id} AI started");
+        }
+    }
+
+    fn handle_explorer_killed(&mut self, explorer_id: u32) {
+        log::warn!("Explorer {explorer_id} has been killed");
+        self.explorer_alive.insert(explorer_id, false);
+        self.explorer_states.insert(explorer_id, ExplorerState::Idle);
+        self.explorer_planet.remove(&explorer_id);
+    }
+
+    fn handle_explorer_moved(&mut self, explorer_id: u32, planet_id: u32) {
+        let old_planet = self.explorer_planet.insert(explorer_id, planet_id);
+        log::info!("Explorer {explorer_id} moved to planet {planet_id} (was on {:?})", old_planet);
+    }
+
+    fn handle_neighbors_request(&self, explorer_id: u32, current_planet_id: u32) {
+        // Get list of all available planet IDs except the current one
+        let neighbors: Vec<u32> = self.planet_senders.keys()
+            .filter(|&&id| id != current_planet_id)
+            .copied()
+            .collect();
+
+        let msg = OrchestratorToExplorer::NeighborsResponse { neighbors };
+        let _ = self.send_to_explorer(explorer_id, msg);
+    }
+
+    fn handle_travel_request(&mut self, explorer_id: u32, current_planet_id: u32, dst_planet_id: u32) {
+        // validate explorer is alive
+        if !self.explorer_alive.get(&explorer_id).copied().unwrap_or(false) {
+            log::warn!("Explorer {explorer_id} is not alive, ignoring travel request");
+            return;
+        }
+
+        // check if destination planet exists
+        let sender_to_new_planet = self.planet_explorer_senders.get(&dst_planet_id);
+
+        if let Some(sender) = sender_to_new_planet {
+            // planet exists, send MoveToPlanet with the sender
+            let msg = OrchestratorToExplorer::MoveToPlanet {
+                sender_to_new_planet: Some(sender.clone()),
+                planet_id: dst_planet_id,
+            };
+            let _ = self.send_to_explorer(explorer_id, msg);
+            log::info!("Explorer {explorer_id} approved to travel from {current_planet_id} to {dst_planet_id}");
+        } else {
+            // planet doesn't exist, send MoveToPlanet with None
+            let msg = OrchestratorToExplorer::MoveToPlanet {
+                sender_to_new_planet: None,
+                planet_id: dst_planet_id,
+            };
+            let _ = self.send_to_explorer(explorer_id, msg);
+            log::warn!("Explorer {explorer_id} denied travel to planet {dst_planet_id}: planet not found");
+        }
+    }
+}
+
+// ── Lifecycle methods ─────────────────────────────────────────────────────────
+
+impl Orchestrator {
+
+    /// Start a planet's AI
+    pub fn start_planet(&self, planet_id: u32) -> Result<(), String> {
+        let sender = self.planet_senders
+            .get(&planet_id)
+            .ok_or_else(|| format!("No sender found for planet {planet_id}"))?;
+
+        sender.send(OrchestratorToPlanet::StartPlanetAI)
+            .map_err(|e| format!("Failed to start planet {planet_id}: {e}"))?;
+
+        log::info!("Sent start signal to planet {planet_id}");
+        Ok(())
+    }
+
+    /// Stop a planet's AI
+    pub fn stop_planet(&self, planet_id: u32) -> Result<(), String> {
+        let sender = self.planet_senders
+            .get(&planet_id)
+            .ok_or_else(|| format!("No sender found for planet {planet_id}"))?;
+
+        sender.send(OrchestratorToPlanet::StopPlanetAI)
+            .map_err(|e| format!("Failed to stop planet {planet_id}: {e}"))?;
+
+        log::info!("Sent stop signal to planet {planet_id}");
+        Ok(())
+    }
+
+    /// Kill a planet (destroy it)
+    pub fn kill_planet(&mut self, planet_id: u32) -> Result<(), String> {
+        let sender = self.planet_senders
+            .get(&planet_id)
+            .ok_or_else(|| format!("No sender found for planet {planet_id}"))?;
+
+        sender.send(OrchestratorToPlanet::KillPlanet)
+            .map_err(|e| format!("Failed to kill planet {planet_id}: {e}"))?;
+
+        // mark planet as not alive
+        self.planet_alive.insert(planet_id, false);
+        self.planet_states.insert(planet_id, PlanetState::Stopping);
+
+        log::warn!("Sent kill signal to planet {planet_id}");
+        Ok(())
+    }
+
+    /// Start an explorer
+    pub fn start_explorer(&self, explorer_id: u32) -> Result<(), String> {
+        self.send_to_explorer(explorer_id, OrchestratorToExplorer::StartExplorerAI)
+    }
+
+    /// Stop an explorer
+    pub fn stop_explorer(&self, explorer_id: u32) -> Result<(), String> {
+        self.send_to_explorer(explorer_id, OrchestratorToExplorer::StopExplorerAI)
+    }
+
+    /// Kill an explorer
+    pub fn kill_explorer(&mut self, explorer_id: u32) -> Result<(), String> {
+        self.send_to_explorer(explorer_id, OrchestratorToExplorer::KillExplorer)?;
+        self.explorer_alive.insert(explorer_id, false);
+        self.explorer_states.insert(explorer_id, ExplorerState::Stopping);
+        Ok(())
+    }
+}
+
+// ── Message sequence validation ───────────────────────────────────────────────
+
+impl Orchestrator {
+
+    /// Validate and update planet state according to protocol
+    fn validate_planet_state_transition(&mut self, planet_id: u32, new_state: PlanetState) -> bool {
+        let current = self.planet_states
+            .get(&planet_id)
+            .copied()
+            .unwrap_or(PlanetState::Idle);
+
+        let valid = matches!(
+            (current, new_state),
+            (PlanetState::Idle, PlanetState::Starting)
+            | (PlanetState::Starting, PlanetState::Running)
+            | (PlanetState::Running, PlanetState::Stopping)
+            | (PlanetState::Stopping, PlanetState::Idle)
+        );
+
+        if valid {
+            self.planet_states.insert(planet_id, new_state);
+        } else {
+            log::warn!("Invalid planet state transition for {planet_id}: {current:?} -> {new_state:?}");
+        }
+
+        valid
+    }
+
+    /// Validate and update explorer state according to protocol
+    fn validate_explorer_state_transition(&mut self, explorer_id: u32, new_state: ExplorerState) -> bool {
+        let current = self.explorer_states
+            .get(&explorer_id)
+            .copied()
+            .unwrap_or(ExplorerState::Idle);
+
+        let valid = matches!(
+            (current, new_state),
+            (ExplorerState::Idle, ExplorerState::Starting)
+            | (ExplorerState::Starting, ExplorerState::Running)
+            | (ExplorerState::Running, ExplorerState::Stopping)
+            | (ExplorerState::Stopping, ExplorerState::Idle)
+        );
+
+        if valid {
+            self.explorer_states.insert(explorer_id, new_state);
+        } else {
+            log::warn!("Invalid explorer state transition for {explorer_id}: {current:?} -> {new_state:?}");
+        }
+
+        valid
+    }
+}
+
+// ── Initialization ────────────────────────────────────────────────────────────
+
+impl Orchestrator {
+
+    /// Initialize all planets and explorers, start their AIs
+    pub fn initialize(&mut self) -> Result<(), String> {
+        log::info!("Initializing orchestrator...");
+
+        // start all planets
+        let planet_ids: Vec<u32> = self.planet_senders.keys().copied().collect();
+        for planet_id in planet_ids {
+            self.planet_alive.insert(planet_id, true);
+            self.planet_states.insert(planet_id, PlanetState::Starting);
+            self.start_planet(planet_id)?;
+        }
+
+        // mark all explorers as alive
+        let explorer_ids: Vec<u32> = self.explorer_senders.keys().copied().collect();
+        for explorer_id in explorer_ids {
+            self.explorer_alive.insert(explorer_id, true);
+            self.explorer_states.insert(explorer_id, ExplorerState::Starting);
+            self.start_explorer(explorer_id)?;
+        }
+
+        log::info!("Orchestrator initialization complete");
+        Ok(())
     }
 }
