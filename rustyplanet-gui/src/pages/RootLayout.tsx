@@ -70,7 +70,7 @@ export function RootLayout() {
           value={activeTab}
           onChange={handleChangeTab}
           centered
-          sx={{minWidth: "100vw"}}
+          sx={{width: "100vw"}}
         >
           <Tab label="Overview" value="overview" />
           <Tab label="Planet" value="planet" />
