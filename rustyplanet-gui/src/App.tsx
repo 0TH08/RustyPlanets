@@ -14,7 +14,7 @@ function App() {
         palette: {
           mode: 'dark',
           primary: {
-            main: '#90caf9',
+            main: '#bc90f9ff',
           },
           background: {
             default: '#0b1020',

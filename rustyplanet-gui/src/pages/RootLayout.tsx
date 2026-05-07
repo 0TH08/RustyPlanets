@@ -69,10 +69,8 @@ export function RootLayout() {
         <Tabs
           value={activeTab}
           onChange={handleChangeTab}
-          indicatorColor="primary"
-          textColor="inherit"
-          variant="scrollable"
-          scrollButtons="auto"
+          centered
+          sx={{minWidth: "100vw"}}
         >
           <Tab label="Overview" value="overview" />
           <Tab label="Planet" value="planet" />
