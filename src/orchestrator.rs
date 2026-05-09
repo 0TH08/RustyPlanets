@@ -9,7 +9,7 @@ use crossbeam_channel::{Receiver, Sender};
 
 use common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
-use common_game::protocols::planet_explorer::ExplorerToPlanet;
+use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 use crate::explorer::Bag;
 use crate::telemetry::TelemetryHub;
 
@@ -47,6 +47,7 @@ pub struct Orchestrator {
     planet_alive: HashMap<u32, bool>,
     planet_states: HashMap<u32, PlanetState>,
     explorer_states: HashMap<u32, ExplorerState>,
+    explorer_reply_senders: HashMap<u32, Sender<PlanetToExplorer>>,
 }
 
 pub struct StopHandle {
@@ -83,6 +84,7 @@ pub fn new(
             planet_alive: HashMap::new(),
             planet_states: HashMap::new(),
             explorer_states: HashMap::new(),
+            explorer_reply_senders: HashMap::new(),
         })
     }
 
@@ -95,6 +97,11 @@ pub fn new(
 
     pub fn with_step_channel(mut self, step_rx: Receiver<()>) -> Self {
         self.step_rx = Some(step_rx);
+        self
+    }
+
+    pub fn with_explorer_reply_senders(mut self, senders: HashMap<u32, Sender<PlanetToExplorer>>) -> Self {
+        self.explorer_reply_senders = senders;
         self
     }
 
@@ -500,32 +507,39 @@ impl Orchestrator {
     }
 
     fn handle_travel_request(&mut self, explorer_id: u32, current_planet_id: u32, dst_planet_id: u32) {
-        // validate explorer is alive
         if !self.explorer_alive.get(&explorer_id).copied().unwrap_or(false) {
             log::warn!("Explorer {explorer_id} is not alive, ignoring travel request");
             return;
         }
 
-        // check if destination planet exists
-        let sender_to_new_planet = self.planet_explorer_senders.get(&dst_planet_id);
-
-        if let Some(sender) = sender_to_new_planet {
-            // planet exists, send MoveToPlanet with the sender
-            let msg = OrchestratorToExplorer::MoveToPlanet {
-                sender_to_new_planet: Some(sender.clone()),
-                planet_id: dst_planet_id,
-            };
-            let _ = self.send_to_explorer(explorer_id, msg);
-            log::info!("Explorer {explorer_id} approved to travel from {current_planet_id} to {dst_planet_id}");
-        } else {
-            // planet doesn't exist, send MoveToPlanet with None
-            let msg = OrchestratorToExplorer::MoveToPlanet {
-                sender_to_new_planet: None,
-                planet_id: dst_planet_id,
-            };
+        let Some(sender_to_new_planet) = self.planet_explorer_senders.get(&dst_planet_id).cloned() else {
+            let msg = OrchestratorToExplorer::MoveToPlanet { sender_to_new_planet: None, planet_id: dst_planet_id };
             let _ = self.send_to_explorer(explorer_id, msg);
             log::warn!("Explorer {explorer_id} denied travel to planet {dst_planet_id}: planet not found");
+            return;
+        };
+
+        // Bug D fix: tell old planet the explorer is leaving
+        if let Some(old_tx) = self.planet_senders.get(&current_planet_id).cloned() {
+            let _ = old_tx.send(OrchestratorToPlanet::OutgoingExplorerRequest { explorer_id });
         }
+
+        // Bug D fix: give new planet a sender to reply to this explorer
+        if let Some(reply_tx) = self.explorer_reply_senders.get(&explorer_id).cloned() {
+            if let Some(new_tx) = self.planet_senders.get(&dst_planet_id).cloned() {
+                let _ = new_tx.send(OrchestratorToPlanet::IncomingExplorerRequest {
+                    explorer_id,
+                    new_sender: reply_tx,
+                });
+            }
+        }
+
+        let msg = OrchestratorToExplorer::MoveToPlanet {
+            sender_to_new_planet: Some(sender_to_new_planet),
+            planet_id: dst_planet_id,
+        };
+        let _ = self.send_to_explorer(explorer_id, msg);
+        log::info!("Explorer {explorer_id} approved to travel from {current_planet_id} to {dst_planet_id}");
     }
 }
 
@@ -664,11 +678,23 @@ impl Orchestrator {
             self.start_planet(planet_id)?;
         }
 
-        // mark all explorers as alive
+        // mark all explorers as alive and register their reply channels with planet 1
         let explorer_ids: Vec<u32> = self.explorer_senders.keys().copied().collect();
         for explorer_id in explorer_ids {
             self.explorer_alive.insert(explorer_id, true);
             self.explorer_states.insert(explorer_id, ExplorerState::Starting);
+            self.explorer_planet.insert(explorer_id, 1);
+
+            // Bug E fix: give planet 1 a sender so it can respond to this explorer
+            if let Some(reply_tx) = self.explorer_reply_senders.get(&explorer_id).cloned() {
+                if let Some(planet_tx) = self.planet_senders.get(&1).cloned() {
+                    let _ = planet_tx.send(OrchestratorToPlanet::IncomingExplorerRequest {
+                        explorer_id,
+                        new_sender: reply_tx,
+                    });
+                }
+            }
+
             self.start_explorer(explorer_id)?;
         }
 

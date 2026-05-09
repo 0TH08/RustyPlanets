@@ -16,9 +16,10 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 use skycartel::broadcast_log::{BroadcastLogger, LogEntry};
-use skycartel::common_game::protocols::orchestrator_explorer::OrchestratorToExplorer;
-use skycartel::common_game::protocols::orchestrator_planet::OrchestratorToPlanet;
-use skycartel::common_game::protocols::planet_explorer::ExplorerToPlanet;
+use skycartel::common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
+use skycartel::common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
+use skycartel::common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
+use skycartel::orchestrator::Orchestrator;
 use skycartel::create_planet;
 use skycartel::create_planet_with_telemetry;
 use skycartel::explorer::{Bag, Explorer};
@@ -338,17 +339,20 @@ fn main() {
     let mut planet_explorer_senders: HashMap<u32, Sender<ExplorerToPlanet>> = HashMap::new();
     let mut explorer_senders: HashMap<u32, Sender<OrchestratorToExplorer>> = HashMap::new();
 
+    // Bug A fix: one shared channel so all planets send to one orchestrator receiver
+    let (planet_to_orch_tx, planet_to_orch_rx) = crossbeam_channel::unbounded::<PlanetToOrchestrator>();
+
     // Create planets
     for config in PLANET_CONFIGS {
         let (otx, orx) = crossbeam_channel::unbounded();
-        let (ptx, _prx) = crossbeam_channel::unbounded();
+        let ptx = planet_to_orch_tx.clone();
         let (etx, erx) = crossbeam_channel::unbounded();
 
         let ai_running = Arc::new(AtomicBool::new(false));
 
         // Clone channels so fallback can use them if telemetry creation fails
         let orx_clone = orx.clone();
-        let ptx_clone = ptx.clone();
+        let ptx_clone = planet_to_orch_tx.clone();
         let erx_clone = erx.clone();
 
         let result = create_planet_with_telemetry(
@@ -399,31 +403,29 @@ fn main() {
         }
     }
 
+    // Shared channel: all explorers report back through one receiver (Bug B fix: receiver passed to Orchestrator below)
+    let (exp_to_orch_tx, exp_to_orch_rx) = crossbeam_channel::unbounded::<ExplorerToOrchestrator<Bag>>();
+    let mut explorer_reply_senders: HashMap<u32, Sender<PlanetToExplorer>> = HashMap::new();
+
     // Create explorers
     for explorer_id in 1..=3 {
-        // Channel directions:
-        // - orch_to_exp_tx: we send TO explorer, explorer receives
-        // - exp_to_orch_tx: explorer sends TO us
-        // - exp_to_planet_tx: explorer sends TO planet
-        // - planet_to_exp_tx: planet sends TO explorer, explorer receives
         let (orch_to_exp_tx, orch_to_exp_rx) = crossbeam_channel::unbounded();
-        let (exp_to_orch_tx, _exp_to_orch_rx) = crossbeam_channel::unbounded();
-        let (exp_to_planet_tx, _exp_to_planet_rx) = crossbeam_channel::unbounded();
-        let (_planet_to_exp_tx, planet_to_exp_rx) = crossbeam_channel::unbounded();
+        let (planet_to_exp_tx, planet_to_exp_rx) = crossbeam_channel::unbounded();
+        // Store sender so Orchestrator::initialize() registers it with planet 1 (Bug E)
+        explorer_reply_senders.insert(explorer_id, planet_to_exp_tx);
 
         let explorer: Explorer<Bag> = Explorer::new(
             explorer_id,
-            1, // starting planet
-            exp_to_orch_tx,   // explorer sends TO orchestrator
-            orch_to_exp_rx,   // explorer receives FROM orchestrator
-            exp_to_planet_tx, // explorer sends TO planet
-            planet_to_exp_rx, // explorer receives FROM planet
+            1,
+            exp_to_orch_tx.clone(),
+            orch_to_exp_rx,
+            planet_explorer_senders[&1].clone(),
+            planet_to_exp_rx,
         );
         println!("Created explorer {}", explorer_id);
         thread::spawn(move || {
             explorer.run();
         });
-        // Store sender so we can send commands TO explorers
         explorer_senders.insert(explorer_id, orch_to_exp_tx);
     }
 
@@ -431,6 +433,19 @@ fn main() {
         "Ready: {} planets, 3 explorers",
         PLANET_CONFIGS.len()
     );
+
+    // Bug B/C fix: create and run the Orchestrator with all wired channels
+    let _stop_handle = Orchestrator::new(
+        planet_senders.clone(),
+        planet_explorer_senders.clone(),
+        planet_to_orch_rx,
+        explorer_senders.clone(),
+        exp_to_orch_rx,
+    )
+    .expect("Failed to create orchestrator")
+    .with_explorer_reply_senders(explorer_reply_senders)
+    .with_telemetry(telemetry.clone())
+    .run();
 
     // Start GUI server
     let rt = Builder::new_multi_thread().enable_all().build().unwrap();
