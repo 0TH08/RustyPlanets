@@ -2,6 +2,7 @@
 name = "skycartel"
 version = "1.0.0"
 edition = "2021"
+autobins = false
 
 [lib]
 name = "skycartel"
