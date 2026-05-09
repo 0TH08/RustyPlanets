@@ -5,13 +5,8 @@
 //! used by other planet crates.
 
 /// Skycartel uses a single stable phase.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum SkycartelPhase {
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+pub enum SkycartelPhase {
+    #[default]
     Stable,
-}
-
-impl Default for SkycartelPhase {
-    fn default() -> Self {
-        Self::Stable
-    }
 }

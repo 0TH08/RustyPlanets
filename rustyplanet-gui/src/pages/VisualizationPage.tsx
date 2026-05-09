@@ -17,7 +17,12 @@ interface OrbitObject {
 
 const MOCK_OBJECTS: OrbitObject[] = [
   { id: 'planet-1', radius: 40, speed: 0.5, color: '#90caf9', label: 'Skycartel Alpha' },
-  { id: 'planet-2', radius: 70, speed: 0.3, color: '#ffb74d', label: 'Experimental Beta' },
+  { id: 'planet-2', radius: 70, speed: 0.3, color: '#ffb74d', label: 'Luna4 Prime' },
+  { id: 'planet-3', radius: 55, speed: 0.4, color: '#81c784', label: 'Black Adidas Shoe' },
+  { id: 'planet-4', radius: 85, speed: 0.2, color: '#ce93d8', label: 'Immutable Cosmic Borrow' },
+  { id: 'planet-5', radius: 65, speed: 0.6, color: '#ffcc02', label: 'Rust-Eze' },
+  { id: 'planet-6', radius: 50, speed: 0.7, color: '#ef5350', label: 'Crabtorio' },
+  { id: 'planet-7', radius: 75, speed: 0.35, color: '#26c6da', label: 'Orbitron' },
   { id: 'asteroid', radius: 95, speed: 0.9, color: '#e57373', label: 'Asteroid stream' },
 ]
 

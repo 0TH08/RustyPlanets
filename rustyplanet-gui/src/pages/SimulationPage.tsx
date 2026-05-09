@@ -6,6 +6,7 @@ import {
   setSimulationRunState,
   setSimulationSpeed,
   stepSimulation,
+  resetSimulation,
 } from '../services/simulationService'
 import { useSimulationStore } from '../store/simulationStore'
 
@@ -16,11 +17,10 @@ interface SimulationPageProps {
 }
 
 export function SimulationPage({ mode }: SimulationPageProps) {
-  const { runState, tick, speed, isBusy, setRunState, setSpeed, incrementTick, setBusy } = useSimulationStore()
+  const { runState, tick, speed, isBusy, setRunState, setSpeed, setTick, setBusy } = useSimulationStore()
   const [localSpeed, setLocalSpeed] = useState(speed)
 
   useEffect(() => {
-    // Initial load from backend (mocked for now)
     ;(async () => {
       setBusy(true)
       try {
@@ -57,7 +57,6 @@ export function SimulationPage({ mode }: SimulationPageProps) {
     setBusy(true)
     try {
       const status = await stepSimulation()
-      incrementTick()
       setRunState(status.runState)
     } finally {
       setBusy(false)
@@ -76,34 +75,63 @@ export function SimulationPage({ mode }: SimulationPageProps) {
     }
   }
 
+  const handleReset = async () => {
+    setBusy(true)
+    try {
+      const status = await resetSimulation()
+      setRunState(status.runState)
+      setSpeed(status.speed)
+      setTick(0)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleIdle = async () => {
+    setBusy(true)
+    try {
+      const status = await setSimulationRunState('idle')
+      setRunState(status.runState)
+      setTick(0)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <Card>
       <CardContent>
         <Typography variant="h6" gutterBottom>
-          Simulation controls
+          Simulation Controls
         </Typography>
         <Stack spacing={2}>
           <Box>
             <Typography variant="body2" color="text.secondary">
-              Control starting, pausing and stepping the simulation.
+              Control the simulation state, speed, and tick progression.
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            <Typography variant="body2" sx={{ mt: 1 }}>
               State: <strong>{runState}</strong> · Tick: <strong>{tick}</strong>
             </Typography>
           </Box>
-          <Box display="flex" gap={1}>
+          <Box display="flex" gap={1} flexWrap="wrap">
             <Button variant="contained" color="primary" onClick={handleStart} disabled={isBusy || runState === 'running'}>
-              Start
+              ▶ Start
             </Button>
             <Button variant="outlined" color="primary" onClick={handlePause} disabled={isBusy || runState !== 'running'}>
-              Pause
+              ⏸ Pause
             </Button>
             <Button variant="outlined" color="secondary" onClick={handleStep} disabled={isBusy}>
-              Step
+              ⏭ Step
+            </Button>
+            <Button variant="outlined" color="warning" onClick={handleReset} disabled={isBusy}>
+              🔄 Reset
+            </Button>
+            <Button variant="text" color="error" onClick={handleIdle} disabled={isBusy}>
+              ⏹ Stop
             </Button>
           </Box>
           <Box>
-            <Typography gutterBottom>Speed</Typography>
+            <Typography gutterBottom>Speed ({speed.toFixed(1)}x)</Typography>
             <Slider
               min={0.1}
               max={5}
@@ -112,14 +140,11 @@ export function SimulationPage({ mode }: SimulationPageProps) {
               onChange={(_, value) => setLocalSpeed(Array.isArray(value) ? value[0] : value)}
               onChangeCommitted={handleSpeedCommit}
             />
-            <Typography variant="body2" color="text.secondary">
-              Current speed: <strong>{speed.toFixed(1)}x</strong>
-            </Typography>
           </Box>
           {mode === 'debug' && (
             <Box>
               <Typography variant="body2" color="text.secondary">
-                In debug mode, additional controls (seed, forced events, etc.) can be added here.
+                Debug mode: Additional controls for seed, forced events, etc. can be added here.
               </Typography>
             </Box>
           )}
@@ -129,4 +154,3 @@ export function SimulationPage({ mode }: SimulationPageProps) {
     </Card>
   )
 }
-

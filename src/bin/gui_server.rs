@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -9,40 +8,50 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
+use crossbeam_channel::Sender;
 use serde::{Deserialize, Serialize};
-use tokio::time::interval;
+use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum RunState {
-    Idle,
-    Running,
-    Paused,
+use skycartel::telemetry::{TelemetryHub, RunState, PlanetKind};
+use skycartel::broadcast_log::LogEntry;
+
+// ── Shared app state ─────────────────────────────────────────────────────────
+// Note: Some fields will be populated by the integration binary.
+// Dead-code annotations silence warnings in standalone server mode.
+
+#[derive(Clone)]
+struct AppState {
+    telemetry: Arc<TelemetryHub>,
+    step_tx: Option<Arc<Sender<()>>>,
+    log_tx: broadcast::Sender<LogEntry>,
 }
 
+// ── API request/response types ───────────────────────────────────────────────
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SimulationStatus {
-    run_state: RunState,
+struct ApiSimStatus {
+    run_state: ApiRunState,
     tick: u64,
     speed: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum PlanetKind {
-    Skycartel,
-    Other,
+enum ApiRunState {
+    Idle,
+    Running,
+    Paused,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SkycartelStats {
-    total_resources_generated: u64,
-    explorer_arrivals: u64,
-    explorer_departures: u64,
-    rockets_built: u64,
-    asteroids_deflected: u64,
-    errors_encountered: u64,
+// Helper function to convert RunState to ApiRunState
+fn to_api_run_state(s: RunState) -> ApiRunState {
+    match s {
+        RunState::Idle => ApiRunState::Idle,
+        RunState::Running => ApiRunState::Running,
+        RunState::Paused => ApiRunState::Paused,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,53 +59,25 @@ struct PlanetSummary {
     id: u32,
     name: String,
     kind: PlanetKind,
-    type_label: String,
-    run_state: RunState,
-    energy_cells_total: u32,
-    energy_cells_charged: u32,
-    resource_cells_total: Option<u32>,
-    resource_cells_charged: Option<u32>,
-    defense_cells_total: Option<u32>,
-    defense_cells_charged: Option<u32>,
-    errors: u32,
+    ai_running: bool,
+    explorer_count: usize,
+    total_resources_generated: usize,
+    rockets_built: usize,
+    asteroids_deflected: usize,
+    errors_encountered: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PlanetDetails {
     #[serde(flatten)]
     summary: PlanetSummary,
-    resources: serde_json::Value,
-    skycartel_stats: Option<SkycartelStats>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum LogLevel {
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LogEntry {
-    id: String,
-    timestamp: String,
-    level: LogLevel,
-    source: String,
-    planet_id: Option<u32>,
-    message: String,
-}
-
-#[derive(Clone)]
-struct AppState {
-    simulation: Arc<Mutex<SimulationStatus>>,
-    planets: Arc<Mutex<Vec<PlanetDetails>>>,
+    explorer_arrivals: usize,
+    explorer_departures: usize,
 }
 
 #[derive(Debug, Deserialize)]
 struct SetRunStateBody {
-    run_state: RunState,
+    run_state: ApiRunState,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,69 +85,25 @@ struct SetSpeedBody {
     speed: f32,
 }
 
+// ── Main ─────────────────────────────────────────────────────────────────────
+
 #[tokio::main]
 async fn main() {
-    let simulation = SimulationStatus {
-        run_state: RunState::Idle,
-        tick: 0,
-        speed: 1.0,
+    let telemetry = Arc::new(TelemetryHub::new());
+    let step_tx: Option<Arc<Sender<()>>> = None;
+
+    // Initialize broadcast logger (falls back to silent if already set)
+    let log_tx = match skycartel::broadcast_log::BroadcastLogger::init() {
+        Ok((tx, _rx)) => tx,
+        Err(_) => {
+            // Logger already set — create a standalone channel
+            // In a full integration this path is reached only in tests
+            let (tx, _) = broadcast::channel::<LogEntry>(1024);
+            tx
+        }
     };
 
-    let planets = vec![
-        PlanetDetails {
-            summary: PlanetSummary {
-                id: 1,
-                name: "Skycartel Alpha".to_string(),
-                kind: PlanetKind::Skycartel,
-                type_label: "Type A (Skycartel)".to_string(),
-                run_state: RunState::Running,
-                energy_cells_total: 5,
-                energy_cells_charged: 4,
-                resource_cells_total: Some(3),
-                resource_cells_charged: Some(3),
-                defense_cells_total: Some(2),
-                defense_cells_charged: Some(1),
-                errors: 0,
-            },
-            resources: serde_json::json!({
-                "Carbon": 120,
-                "Iron": 40,
-            }),
-            skycartel_stats: Some(SkycartelStats {
-                total_resources_generated: 500,
-                explorer_arrivals: 12,
-                explorer_departures: 8,
-                rockets_built: 2,
-                asteroids_deflected: 3,
-                errors_encountered: 1,
-            }),
-        },
-        PlanetDetails {
-            summary: PlanetSummary {
-                id: 2,
-                name: "Experimental Beta".to_string(),
-                kind: PlanetKind::Other,
-                type_label: "Type B (external)".to_string(),
-                run_state: RunState::Paused,
-                energy_cells_total: 6,
-                energy_cells_charged: 3,
-                resource_cells_total: Some(3),
-                resource_cells_charged: Some(2),
-                defense_cells_total: Some(3),
-                defense_cells_charged: Some(1),
-                errors: 2,
-            },
-            resources: serde_json::json!({
-                "Hydrogen": 80,
-            }),
-            skycartel_stats: None,
-        },
-    ];
-
-    let state = AppState {
-        simulation: Arc::new(Mutex::new(simulation)),
-        planets: Arc::new(Mutex::new(planets)),
-    };
+    let state = AppState { telemetry, step_tx, log_tx };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -181,69 +118,135 @@ async fn main() {
         .route("/api/planets", get(list_planets))
         .route("/api/planets/:id", get(get_planet))
         .route("/ws/logs", get(logs_ws_upgrade))
+        .fallback_service(
+            ServeDir::new("rustyplanet-gui/dist")
+                .fallback(ServeFile::new("rustyplanet-gui/dist/index.html"))
+        )
         .with_state(state)
         .layer(cors);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     println!("Skycartel GUI server listening on http://{}", addr);
 
-    axum::serve(tokio::net::TcpListener::bind(addr).await.expect("bind failed"), app)
-        .await
-        .expect("server error");
+    axum::serve(
+        tokio::net::TcpListener::bind(addr).await.expect("bind failed"),
+        app,
+    )
+    .await
+    .expect("server error");
 }
 
-async fn get_simulation_status(State(state): State<AppState>) -> Json<SimulationStatus> {
-    let sim = state
-        .simulation
-        .lock()
-        .expect("simulation mutex poisoned")
-        .clone();
-    Json(sim)
+// ── REST handlers ────────────────────────────────────────────────────────────
+
+async fn get_simulation_status(State(state): State<AppState>) -> Json<ApiSimStatus> {
+    let sim = &state.telemetry.sim_status;
+    Json(ApiSimStatus {
+        run_state: to_api_run_state(sim.to_api_state()),
+        tick: sim.read_tick(),
+        speed: sim.read_speed(),
+    })
 }
 
 async fn set_run_state(
     State(state): State<AppState>,
     Json(body): Json<SetRunStateBody>,
-) -> Json<SimulationStatus> {
-    let mut sim = state
-        .simulation
-        .lock()
-        .expect("simulation mutex poisoned");
-    sim.run_state = body.run_state;
-    Json(sim.clone())
+) -> Json<ApiSimStatus> {
+    let sim = &state.telemetry.sim_status;
+
+    match body.run_state {
+        ApiRunState::Running => {
+            sim.run_state.store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(ref tx) = state.step_tx {
+                let _ = tx.try_send(());
+            }
+        }
+        ApiRunState::Paused => {
+            sim.run_state.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        ApiRunState::Idle => {
+            sim.run_state.store(false, std::sync::atomic::Ordering::SeqCst);
+            sim.set_tick(0);
+        }
+    }
+
+    Json(ApiSimStatus {
+        run_state: to_api_run_state(sim.to_api_state()),
+        tick: sim.read_tick(),
+        speed: sim.read_speed(),
+    })
 }
 
-async fn step_simulation(State(state): State<AppState>) -> Json<SimulationStatus> {
-    let mut sim = state
-        .simulation
-        .lock()
-        .expect("simulation mutex poisoned");
-    sim.tick = sim.tick.saturating_add(1);
-    Json(sim.clone())
+async fn step_simulation(State(state): State<AppState>) -> Json<ApiSimStatus> {
+    if let Some(ref tx) = state.step_tx {
+        let _ = tx.try_send(());
+    }
+    let sim = &state.telemetry.sim_status;
+    sim.run_state.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    Json(ApiSimStatus {
+        run_state: to_api_run_state(sim.to_api_state()),
+        tick: sim.read_tick(),
+        speed: sim.read_speed(),
+    })
 }
 
 async fn set_speed(
     State(state): State<AppState>,
     Json(body): Json<SetSpeedBody>,
-) -> Json<SimulationStatus> {
-    let mut sim = state
-        .simulation
-        .lock()
-        .expect("simulation mutex poisoned");
-    sim.speed = body.speed;
-    Json(sim.clone())
+) -> Json<ApiSimStatus> {
+    state.telemetry.sim_status.set_speed(body.speed);
+    let sim = &state.telemetry.sim_status;
+    Json(ApiSimStatus {
+        run_state: to_api_run_state(sim.to_api_state()),
+        tick: sim.read_tick(),
+        speed: sim.read_speed(),
+    })
 }
 
 async fn list_planets(State(state): State<AppState>) -> Json<Vec<PlanetSummary>> {
-    let planets = state.planets.lock().expect("planets mutex poisoned");
-    let summaries = planets.iter().map(|p| p.summary.clone()).collect();
-    Json(summaries)
+        let planets = state.telemetry.planets.read().unwrap();
+        let summaries: Vec<PlanetSummary> = planets
+            .iter()
+            .map(|(id, entry)| {
+                let snap = entry.snapshot();
+                PlanetSummary {
+                    id: *id,
+                    name: snap.name,
+                    kind: snap.kind,
+                    ai_running: snap.ai_running,
+                    explorer_count: snap.explorer_count,
+                    total_resources_generated: snap.stats.total_resources_generated,
+                    rockets_built: snap.stats.rockets_built,
+                    asteroids_deflected: snap.stats.asteroids_deflected,
+                    errors_encountered: snap.stats.errors_encountered,
+                }
+            })
+            .collect();
+        Json(summaries)
 }
 
-async fn get_planet(State(state): State<AppState>, axum::extract::Path(id): axum::extract::Path<u32>) -> impl IntoResponse {
-    let planets = state.planets.lock().expect("planets mutex poisoned");
-    if let Some(p) = planets.iter().find(|p| p.summary.id == id) {
-        let details = p.clone();
+async fn get_planet(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<u32>,
+) -> impl IntoResponse {
+    let planets = state.telemetry.planets.read().unwrap();
+    if let Some(entry) = planets.get(&id) {
+        let snap = entry.snapshot();
+            let details = PlanetDetails {
+                summary: PlanetSummary {
+                    id,
+                    name: snap.name,
+                    kind: snap.kind,
+                    ai_running: snap.ai_running,
+                    explorer_count: snap.explorer_count,
+                    total_resources_generated: snap.stats.total_resources_generated,
+                    rockets_built: snap.stats.rockets_built,
+                    asteroids_deflected: snap.stats.asteroids_deflected,
+                    errors_encountered: snap.stats.errors_encountered,
+                },
+            explorer_arrivals: snap.stats.explorer_arrivals,
+            explorer_departures: snap.stats.explorer_departures,
+        };
         (axum::http::StatusCode::OK, Json(details)).into_response()
     } else {
         (
@@ -254,42 +257,40 @@ async fn get_planet(State(state): State<AppState>, axum::extract::Path(id): axum
     }
 }
 
+// ── WebSocket — real log streaming via broadcast channel ─────────────────────
+
 async fn logs_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_logs_ws(socket, state))
+    let log_rx = state.log_tx.subscribe();
+    ws.on_upgrade(move |socket| handle_logs_ws(socket, log_rx))
 }
 
-async fn handle_logs_ws(mut socket: WebSocket, _state: AppState) {
-    let mut ticker = interval(Duration::from_secs(1));
-    let mut counter: u64 = 0;
-
+async fn handle_logs_ws(mut socket: WebSocket, mut log_rx: broadcast::Receiver<LogEntry>) {
     loop {
-        ticker.tick().await;
-        counter = counter.wrapping_add(1);
-        let now = chrono::Utc::now();
-        let level = match counter % 4 {
-            0 => LogLevel::Debug,
-            1 => LogLevel::Info,
-            2 => LogLevel::Warn,
-            _ => LogLevel::Error,
-        };
-
-        let entry = LogEntry {
-            id: format!("{}-{}", now.timestamp_millis(), counter),
-            timestamp: now.to_rfc3339(),
-            level,
-            source: "mock-engine".to_string(),
-            planet_id: if counter % 2 == 0 { Some(1) } else { None },
-            message: format!("Sample log event #{counter}"),
-        };
-
-        let text = match serde_json::to_string(&entry) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-
-        if socket.send(Message::Text(text)).await.is_err() {
-            break;
+        match log_rx.recv().await {
+            Ok(entry) => {
+                let text = match serde_json::to_string(&entry) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                if socket.send(Message::Text(text)).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                // consumer too slow — send a notice and keep going
+                let notice = serde_json::json!({
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "level": "Warn",
+                    "target": "ws-logs",
+                    "message": format!("Lagged {} log entries", n),
+                });
+                if let Ok(text) = serde_json::to_string(&notice) {
+                    if socket.send(Message::Text(text)).await.is_err() {
+                        break;
+                    }
+                }
+            }
         }
     }
 }
-

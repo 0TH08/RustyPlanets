@@ -28,6 +28,7 @@ pub struct Explorer<T>{
     ai_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
+#[derive(Debug)]
 pub struct Bag {
     pub basic_resources : HashMap<BasicResourceType, u32>,
     pub complex_resources: HashMap<ComplexResourceType, u32>,
@@ -168,13 +169,13 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T>{
         if let Ok(PlanetToExplorer::CombineResourceResponse { complex_response }) = self.planet_receiver.recv(){
             match complex_response{
                 Ok(complex_resource)=>{
-                    self.bag.lock().unwrap().insert_complex_resource_in_bag(complex_resource);
+                    self.bag.lock().expect("Bag mutex poisoned").insert_complex_resource_in_bag(complex_resource);
                     ExplorerToOrchestrator::CombineResourceResponse { explorer_id: self.id, generated: Ok(()) }
                 }
 
                 Err((e, r1, r2))=>{
-                    self.bag.lock().unwrap().restore_resource(r1);
-                    self.bag.lock().unwrap().restore_resource(r2);
+                    self.bag.lock().expect("Bag mutex poisoned").restore_resource(r1);
+                    self.bag.lock().expect("Bag mutex poisoned").restore_resource(r2);
                     ExplorerToOrchestrator::CombineResourceResponse { explorer_id: self.id, generated: Err(e) }
                 }
             }
@@ -186,48 +187,48 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T>{
     }
 
     fn make_aipartner(&mut self)->Option<ComplexResourceRequest>{
-        let r= self.bag.lock().unwrap().take_complex_resource(ComplexResourceType::Robot)?;
-        let d= self.bag.lock().unwrap().take_complex_resource(ComplexResourceType::Diamond)?;
+        let r= self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Robot)?;
+        let d= self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Diamond)?;
         let r = r.to_robot().ok()?;
         let d = d.to_diamond().ok()?;
         Some(ComplexResourceRequest::AIPartner(r, d))
     }
 
     fn make_dolphin(&mut self)->Option<ComplexResourceRequest>{
-        let w= self.bag.lock().unwrap().take_complex_resource(ComplexResourceType::Water)?;
-        let l= self.bag.lock().unwrap().take_complex_resource(ComplexResourceType::Life)?;
+        let w= self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Water)?;
+        let l= self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Life)?;
         let w= w.to_water().ok()?;
         let l = l.to_life().ok()?;
         Some(ComplexResourceRequest::Dolphin(w, l))
     }
 
     fn make_robot(&mut self)->Option<ComplexResourceRequest>{
-        let s= self.bag.lock().unwrap().take_basic_resource(BasicResourceType::Silicon)?;
-        let l= self.bag.lock().unwrap().take_complex_resource(ComplexResourceType::Life)?;
+        let s= self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Silicon)?;
+        let l= self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Life)?;
         let s= s.to_silicon().ok()?;
         let l = l.to_life().ok()?;
         Some(ComplexResourceRequest::Robot(s, l))
     }
 
     fn make_life(&mut self)->Option<ComplexResourceRequest>{
-        let w= self.bag.lock().unwrap().take_complex_resource(ComplexResourceType::Water)?;
-        let c= self.bag.lock().unwrap().take_basic_resource(BasicResourceType::Carbon)?;
+        let w= self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Water)?;
+        let c= self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Carbon)?;
         let w= w.to_water().ok()?;
         let c = c.to_carbon().ok()?;
         Some(ComplexResourceRequest::Life(w, c))
     }
 
     fn make_diamond(&mut self)->Option<ComplexResourceRequest>{
-        let c1= self.bag.lock().unwrap().take_basic_resource(BasicResourceType::Carbon)?;
-        let c2= self.bag.lock().unwrap().take_basic_resource(BasicResourceType::Carbon)?;
+        let c1= self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Carbon)?;
+        let c2= self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Carbon)?;
         let c1 = c1.to_carbon().ok()?;
         let c2 = c2.to_carbon().ok()?;
         Some(ComplexResourceRequest::Diamond(c1, c2))
     }
     
     fn make_water(&mut self)->Option<ComplexResourceRequest>{
-        let h= self.bag.lock().unwrap().take_basic_resource(BasicResourceType::Hydrogen)?;
-        let o= self.bag.lock().unwrap().take_basic_resource(BasicResourceType::Oxygen)?;
+        let h= self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Hydrogen)?;
+        let o= self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Oxygen)?;
         let h = h.to_hydrogen().ok()?;
         let o = o.to_oxygen().ok()?;
         Some(ComplexResourceRequest::Water(h, o))
@@ -382,6 +383,23 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T>{
 
 }
 
+impl From<BagSummary> for Bag {
+    fn from(summary: BagSummary) -> Self {
+        Bag {
+            basic_resources: summary.basic_resources,
+            complex_resources: summary.complex_resources,
+            basic_resource_instances: HashMap::new(),
+            complex_resource_instances: HashMap::new(),
+        }
+    }
+}
+
+impl Default for Bag {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bag{
     pub fn new()->Bag{
         let basic_resources = HashMap::new();
@@ -404,18 +422,15 @@ impl Bag{
     }
 
     pub fn insert_basic_resource_in_bag(&mut self, resource: BasicResource){
-        //1 — get the type and save it
         let resource_type = resource.get_type();
-        //2 — update count
         self.basic_resources.entry(resource_type).and_modify(|c| *c += 1).or_insert(1);
-        //3 — push the actual instance
-        self.basic_resource_instances.entry(resource_type).or_insert_with(Vec::new).push(resource);
+        self.basic_resource_instances.entry(resource_type).or_default().push(resource);
     }
 
     pub fn insert_complex_resource_in_bag(&mut self, resource: ComplexResource){
         let resource_type = resource.get_type();
         self.complex_resources.entry(resource_type).and_modify(|c| *c += 1).or_insert(1);
-        self.complex_resource_instances.entry(resource_type).or_insert_with(Vec::new).push(resource);
+        self.complex_resource_instances.entry(resource_type).or_default().push(resource);
     }
 
     pub fn take_basic_resource(&mut self, resource_type: BasicResourceType)->Option<BasicResource>{

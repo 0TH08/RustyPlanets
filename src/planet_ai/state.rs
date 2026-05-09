@@ -10,18 +10,22 @@ use std::time::{Duration, Instant};
 use super::cycle::SkycartelPhase;
 use super::RustyPlanetId;
 use common_game::components::resource::BasicResourceType;
+use serde::Serialize;
 
 /// Tracks the operational state of a Skycartel planet.
 #[derive(Debug)]
 pub struct SkycartelState {
-    pub(crate) id: RustyPlanetId,
-    pub(crate) phase: SkycartelPhase,
-    pub(crate) phase_start_time: Instant,
+    pub id: RustyPlanetId,
+    pub phase: SkycartelPhase,
+    pub phase_start_time: Instant,
 
-    pub(crate) generation_history: Vec<BasicResourceType>,
-    pub(crate) present_explorers: HashMap<u32, Instant>,
+    pub generation_history: Vec<BasicResourceType>,
+    pub present_explorers: HashMap<u32, Instant>,
+    
+    pub total_cells: usize,
+    pub charged_cells: usize,
 
-    pub(crate) stats: OperationalStats,
+    pub stats: OperationalStats,
 }
 
 impl SkycartelState {
@@ -33,8 +37,15 @@ impl SkycartelState {
             phase_start_time: Instant::now(),
             generation_history: Vec::new(),
             present_explorers: HashMap::new(),
+            total_cells: 5,
+            charged_cells: 0,
             stats: OperationalStats::new(),
         }
+    }
+    
+    pub(crate) fn update_cells(&mut self, total: usize, charged: usize) {
+        self.total_cells = total;
+        self.charged_cells = charged;
     }
 
     /// Skycartel uses a single stable phase.
@@ -96,18 +107,20 @@ impl SkycartelState {
 }
 
 /// Operational counters for Skycartel.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct OperationalStats {
-    pub(crate) total_resources_generated: usize,
-    pub(crate) explorer_arrivals: usize,
-    pub(crate) explorer_departures: usize,
-    pub(crate) rockets_built: usize,
-    pub(crate) asteroids_deflected: usize,
-    pub(crate) errors_encountered: usize,
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct OperationalStats {
+    pub total_resources_generated: usize,
+    pub explorer_arrivals: usize,
+    pub explorer_departures: usize,
+    pub rockets_built: usize,
+    pub asteroids_deflected: usize,
+    pub combinations_attempted: usize,
+    pub combinations_succeeded: usize,
+    pub errors_encountered: usize,
 }
 
 impl OperationalStats {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 }

@@ -25,10 +25,15 @@ impl From<&OperationalStats> for SkycartelStats {
     }
 }
 
-/*
 impl SkycartelStats {
-    pub fn snapshot(&self) -> Self {
-        self.clone()
+    pub fn snapshot(stats: &crate::planet_ai::state::OperationalStats) -> Self {
+        Self {
+            total_resources_generated: stats.total_resources_generated,
+            explorer_arrivals: stats.explorer_arrivals,
+            explorer_departures: stats.explorer_departures,
+            rockets_built: stats.rockets_built,
+            asteroids_deflected: stats.asteroids_deflected,
+            errors_encountered: stats.errors_encountered,
+        }
     }
 }
-    */

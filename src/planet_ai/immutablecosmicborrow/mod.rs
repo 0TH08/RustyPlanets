@@ -1,0 +1,61 @@
+use std::time::Duration;
+
+use common_game::components::planet::{self, PlanetType};
+use common_game::components::resource::{BasicResourceType, ComplexResourceType};
+use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
+use common_game::protocols::planet_explorer::ExplorerToPlanet;
+use common_game::utils::ID;
+use crossbeam_channel::{Receiver, Sender};
+
+mod ai;
+mod frequency_counter;
+
+pub use ai::Ai;
+
+/// Creates a new Planet instance with the provided AI and communication channels.
+///
+/// # Arguments
+/// * `planet_ai` - The AI implementation that will control the planet's behavior
+/// * `gen_rules` - Vector of basic resource types that the planet can generate (must not be empty)
+/// * `comb_rules` - Vector of complex resource types that the planet can combine
+/// * `orchestrator_channels` - Tuple of (receiver, sender) for communication with the orchestrator
+/// * `explorers_receiver` - Receiver channel for messages from explorers
+///
+/// # Returns
+/// * `Ok(Planet)` - Successfully created planet with ID 0 and type C
+/// # Errors
+/// * `Err(String)` - Error message if planet creation fails (e.g., empty `gen_rules`)
+#[allow(clippy::too_many_arguments)]
+pub fn create_planet(
+    random_mode: bool,
+    basic_gen_coeff: f32,
+    complex_gen_coeff: f32,
+    half_life: Duration,
+    min_time_constant: Duration,
+    id: ID,
+    orchestrator_channels: (Receiver<OrchestratorToPlanet>, Sender<PlanetToOrchestrator>),
+    explorers_receiver: Receiver<ExplorerToPlanet>,
+) -> Result<planet::Planet, String> {
+    planet::Planet::new(
+        id,
+        PlanetType::C,
+        Box::new(Ai::new(
+            random_mode,
+            basic_gen_coeff,
+            complex_gen_coeff,
+            half_life,
+            min_time_constant,
+        )),
+        vec![BasicResourceType::Hydrogen],
+        vec![
+            ComplexResourceType::AIPartner,
+            ComplexResourceType::Diamond,
+            ComplexResourceType::Dolphin,
+            ComplexResourceType::Life,
+            ComplexResourceType::Robot,
+            ComplexResourceType::Water,
+        ],
+        orchestrator_channels,
+        explorers_receiver,
+    )
+}

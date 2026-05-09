@@ -24,26 +24,27 @@ export function OverviewPage({ mode }: OverviewPageProps) {
     <Stack spacing={2}>
       <Card>
         <CardContent>
-          <Typography variant="h6">Simulation status</Typography>
+          <Typography variant="h6">Simulation Status</Typography>
           <Stack spacing={0.5} sx={{ mt: 1 }}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2">
               State: <strong>{runState}</strong>
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2">
               Tick: <strong>{tick}</strong>
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2">
               Speed: <strong>{speed.toFixed(1)}x</strong>
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2">
               Planets: <strong>{planets.length}</strong>
             </Typography>
           </Stack>
         </CardContent>
       </Card>
+
       <Card>
         <CardContent>
-          <Typography variant="h6">Planets</Typography>
+          <Typography variant="h6">Planets ({planets.length})</Typography>
           {isLoadingList && (
             <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1 }}>
               <CircularProgress size={16} />
@@ -69,28 +70,34 @@ export function OverviewPage({ mode }: OverviewPageProps) {
                     primary={
                       <Stack direction="row" spacing={1} alignItems="center">
                         <span>{planet.name}</span>
-                        <Chip size="small" label={planet.typeLabel} />
+                        <Chip size="small" label={planet.kind} color="primary" variant="outlined" />
+                        <Chip 
+                          size="small" 
+                          label={planet.aiRunning ? 'AI Running' : 'AI Stopped'} 
+                          color={planet.aiRunning ? 'success' : 'default'} 
+                        />
                       </Stack>
                     }
-                    secondary={`State: ${planet.runState} · Energy: ${planet.energyCellsCharged}/${planet.energyCellsTotal} · Errors: ${planet.errors}`}
+                    secondary={`Explorers: ${planet.explorerCount} · Generated: ${planet.totalResourcesGenerated} · Rockets: ${planet.rocketsBuilt}`}
                   />
                 </ListItemButton>
               ))}
               {!planets.length && (
                 <Typography variant="body2" color="text.secondary">
-                  No planets available yet.
+                  No planets available.
                 </Typography>
               )}
             </List>
           )}
         </CardContent>
       </Card>
+
       {mode === 'debug' && (
         <Card>
           <CardContent>
-            <Typography variant="h6">Debug metrics</Typography>
+            <Typography variant="h6">Debug Metrics</Typography>
             <Typography variant="body2" color="text.secondary">
-              In debug mode, internal engine metrics and diagnostics can be shown here.
+              Internal engine metrics and diagnostics shown here in debug mode.
             </Typography>
           </CardContent>
         </Card>
@@ -98,4 +105,3 @@ export function OverviewPage({ mode }: OverviewPageProps) {
     </Stack>
   )
 }
-
