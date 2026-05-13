@@ -1,183 +1,357 @@
-import { Button, Card, CardContent, Chip, CircularProgress, Divider, Stack, Typography } from '@mui/material'
-import { useEffect } from 'react'
+import {
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Stack,
+  Typography,
+  Card,
+  styled,
+} from "@mui/material";
 
-import { EnergyCellsView } from '../components/EnergyCellsView'
-import { usePlanetStore } from '../store/planetStore'
-import { startPlanet, stopPlanet } from '../services/planetService'
-import { sendSunray, sendAsteroid } from '../services/simulationService'
+import { useEffect } from "react";
+import { EnergyCellsView } from "../components/EnergyCellsView";
+import { usePlanetStore } from "../store/planetStore";
+import {
+  startPlanet,
+  stopPlanet,
+} from "../services/planetService";
+import {
+  sendSunray,
+  sendAsteroid,
+} from "../services/simulationService";
 
-type Mode = 'player' | 'debug'
+type Mode = "player" | "debug";
 
 interface PlanetPageProps {
-  mode?: Mode
+  mode?: Mode;
 }
 
-export function PlanetPage({ }: PlanetPageProps) {
-  const { selectedPlanet, selectedPlanetId, isLoadingDetails, planets, selectPlanet, loadPlanets } = usePlanetStore()
+const StyledCard = styled(Card)({
+  background: "linear-gradient(145deg, #0f0f0f 0%, #050505 100%)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 16,
+  padding: 24,
+  position: "relative",
+  overflow: "hidden",
+
+  "&::before": {
+    content: '""',
+    position: "absolute",
+    inset: "0 0 auto 0",
+    height: 1,
+    background:
+      "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%)",
+  },
+});
+
+const SECTION_TITLE = (text: string) => (
+  <Typography
+    sx={{
+      fontSize: 14,
+      fontWeight: 500,
+      color: "#9ca3af",
+      textTransform: "uppercase",
+      letterSpacing: "0.1em",
+      mb: 2,
+    }}
+  >
+    {text}
+  </Typography>
+);
+
+const BTN = {
+  base: {
+    borderRadius: "10px",
+    textTransform: "none",
+    fontWeight: 600,
+    boxShadow: "none",
+  },
+
+  start: {
+    bg: "linear-gradient(135deg, #22c55e 0%, #16a34a 100%)",
+    hover: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
+    color: "#fff",
+  },
+
+  stop: {
+    border: "rgba(249,115,22,0.3)",
+    color: "#fb923c",
+    hoverBg: "rgba(249,115,22,0.08)",
+  },
+
+  sunray: {
+    border: "rgba(14,165,233,0.3)",
+    color: "#38bdf8",
+    hoverBg: "rgba(14,165,233,0.08)",
+  },
+
+  asteroid: {
+    border: "rgba(239,68,68,0.3)",
+    color: "#f87171",
+    hoverBg: "rgba(239,68,68,0.08)",
+  },
+};
+
+export function PlanetPage({}: PlanetPageProps) {
+  const {
+    selectedPlanet,
+    selectedPlanetId,
+    isLoadingDetails,
+    selectPlanet,
+    loadPlanets,
+  } = usePlanetStore();
+
+  const p = selectedPlanet;
 
   useEffect(() => {
-    if (!planets.length) {
-      void loadPlanets()
-    }
-  }, [loadPlanets, planets.length])
+    void loadPlanets();
+    const id = setInterval(() => void loadPlanets(), 1500);
+    return () => clearInterval(id);
+  }, [loadPlanets]);
 
-  const handleStart = async () => {
-    if (selectedPlanetId) {
-      await startPlanet(selectedPlanetId)
-      await selectPlanet(selectedPlanetId)
-    }
-  }
+  const runIfPlanet = async (fn: (id: number) => Promise<any>) => {
+    if (!selectedPlanetId) return;
+    await fn(selectedPlanetId);
+    await selectPlanet(selectedPlanetId);
+  };
 
-  const handleStop = async () => {
-    if (selectedPlanetId) {
-      await stopPlanet(selectedPlanetId)
-      await selectPlanet(selectedPlanetId)
-    }
-  }
-
-  const handleSunray = async () => {
-    if (selectedPlanetId) {
-      await sendSunray(selectedPlanetId)
-    }
-  }
-
-  const handleAsteroid = async () => {
-    if (selectedPlanetId) {
-      await sendAsteroid(selectedPlanetId)
-    }
-  }
-
-  const p = selectedPlanet
+  const stats = p && [
+    ["Explorers", p.summary.explorerCount],
+    ["Resources Generated", p.summary.totalResourcesGenerated],
+    ["Rockets Built", p.summary.rocketsBuilt],
+    ["Asteroids Deflected", p.summary.asteroidsDeflected],
+    ["Errors", p.summary.errorsEncountered],
+    ["Arrivals", p.explorerArrivals],
+    ["Departures", p.explorerDepartures],
+  ];
 
   return (
     <Stack spacing={2}>
-      <Card>
-        <CardContent>
-          <Typography variant="h6">Planet Details</Typography>
-          {isLoadingDetails && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
-              <CircularProgress size={16} />
-              <Typography variant="body2" color="text.secondary">
-                Loading...
-              </Typography>
-            </Stack>
-          )}
-          {!isLoadingDetails && !p && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              {selectedPlanetId == null ? 'Select a planet from the Overview tab.' : 'Planet details not available.'}
-            </Typography>
-          )}
+      {/* Planet Details */}
+      <StyledCard>
+        {SECTION_TITLE("Planet Details")}
+
+        <Box display="flex" justifyContent="space-between" mb={2}>
           {p && (
-            <Stack spacing={1} sx={{ mt: 1 }}>
-              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                <Typography variant="h5" component="span">
-                  {p.summary.name}
-                </Typography>
-                <Chip size="small" label={p.summary.kind} color="primary" variant="outlined" />
-                <Chip 
-                  size="small" 
-                  label={p.summary.aiRunning ? 'AI Running' : 'AI Stopped'} 
-                  color={p.summary.aiRunning ? 'success' : 'default'} 
-                />
-              </Stack>
-              <Typography variant="body2" color="text.secondary">
-                ID: {p.summary.id} · Type: {p.summary.kind}
-              </Typography>
-              <Divider sx={{ my: 1 }} />
-              
-              <Stack direction="row" spacing={1} flexWrap="wrap">
-                <Button variant="contained" color="primary" size="small" onClick={handleStart}>
-                  Start AI
-                </Button>
-                <Button variant="outlined" color="warning" size="small" onClick={handleStop}>
-                  Stop AI
-                </Button>
-                <Button variant="outlined" color="info" size="small" onClick={handleSunray}>
-                  ☀️ Send Sunray
-                </Button>
-                <Button variant="outlined" color="error" size="small" onClick={handleAsteroid}>
-                  ☄️ Send Asteroid
-                </Button>
-              </Stack>
-            </Stack>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent>
-          <Typography variant="h6">Energy Cells</Typography>
-          {p ? (
-            <EnergyCellsView
-              total={p.cells.length}
-              charged={p.cells.filter(c => c.charged).length}
-              resourceTotal={Math.min(3, p.cells.length)}
-              resourceCharged={p.cells.slice(0, Math.min(3, p.cells.length)).filter(c => c.charged).length}
-              defenseTotal={Math.max(0, p.cells.length - 3)}
-              defenseCharged={p.cells.slice(3).filter(c => c.charged).length}
+            <Chip
+              label={p.summary.aiRunning ? "AI Running" : "AI Stopped"}
+              size="small"
+              sx={{
+                background: p.summary.aiRunning
+                  ? "rgba(34,197,94,0.15)"
+                  : "rgba(107,114,128,0.2)",
+                color: p.summary.aiRunning ? "#4ade80" : "#9ca3af",
+                border: p.summary.aiRunning
+                  ? "1px solid rgba(34,197,94,0.4)"
+                  : "1px solid rgba(107,114,128,0.3)",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
             />
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              Select a planet to view energy cells.
-            </Typography>
           )}
-        </CardContent>
-      </Card>
+        </Box>
 
-      <Card>
-        <CardContent>
-          <Typography variant="h6">Statistics</Typography>
-          {p ? (
-            <Stack spacing={0.5}>
-              <Typography variant="body2">
-                Explorers present: <strong>{p.summary.explorerCount}</strong>
+        {isLoadingDetails && (
+          <Stack direction="row" spacing={1} alignItems="center">
+            <CircularProgress size={16} />
+            <Typography sx={{ fontSize: 13, color: "#9ca3af" }}>
+              Loading...
+            </Typography>
+          </Stack>
+        )}
+
+        {!isLoadingDetails && !p && (
+          <Typography sx={{ fontSize: 13, color: "#6b7280" }}>
+            {selectedPlanetId == null
+              ? "Select a planet from the Overview tab."
+              : "Planet details not available."}
+          </Typography>
+        )}
+
+        {p && (
+          <Stack spacing={2}>
+            {/* Header */}
+            <Box
+              sx={{
+                p: 2,
+                borderRadius: 2,
+                background: "rgba(255,255,255,0.02)",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <Typography sx={{ fontSize: 24, fontWeight: 700, color: "#fff" }}>
+                {p.summary.name}
               </Typography>
-              <Typography variant="body2">
-                Resources generated: <strong>{p.summary.totalResourcesGenerated}</strong>
+
+              <Chip
+                size="small"
+                label={p.summary.kind}
+                sx={{
+                  background: "rgba(99,102,241,0.12)",
+                  color: "#818cf8",
+                  border: "1px solid rgba(99,102,241,0.25)",
+                  fontWeight: 600,
+                  mt: 1,
+                }}
+              />
+
+              <Typography sx={{ fontSize: 12, color: "#6b7280", mt: 1 }}>
+                ID: {p.summary.id}
               </Typography>
-              <Typography variant="body2">
-                Rockets built: <strong>{p.summary.rocketsBuilt}</strong>
-              </Typography>
-              <Typography variant="body2">
-                Asteroids deflected: <strong>{p.summary.asteroidsDeflected}</strong>
-              </Typography>
-              <Typography variant="body2">
-                Errors: <strong>{p.summary.errorsEncountered}</strong>
-              </Typography>
-              <Divider sx={{ my: 1 }} />
-              <Typography variant="body2">
-                Explorer arrivals: <strong>{p.explorerArrivals}</strong>
-              </Typography>
-              <Typography variant="body2">
-                Explorer departures: <strong>{p.explorerDepartures}</strong>
-              </Typography>
+            </Box>
+
+            {/* Actions */}
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Button
+                variant="contained"
+                onClick={() => runIfPlanet(startPlanet)}
+                sx={{
+                  ...BTN.base,
+                  background: BTN.start.bg,
+                  color: BTN.start.color,
+                  "&:hover": { background: BTN.start.hover },
+                }}
+              >
+                Start AI
+              </Button>
+
+              <Button
+                variant="outlined"
+                onClick={() => runIfPlanet(stopPlanet)}
+                sx={{
+                  ...BTN.base,
+                  borderColor: BTN.stop.border,
+                  color: BTN.stop.color,
+                  "&:hover": {
+                    borderColor: BTN.stop.color,
+                    background: BTN.stop.hoverBg,
+                  },
+                }}
+              >
+                Stop AI
+              </Button>
+
+              <Button
+                variant="outlined"
+                onClick={() => runIfPlanet(sendSunray)}
+                sx={{
+                  ...BTN.base,
+                  borderColor: BTN.sunray.border,
+                  color: BTN.sunray.color,
+                  "&:hover": {
+                    borderColor: BTN.sunray.color,
+                    background: BTN.sunray.hoverBg,
+                  },
+                }}
+              >
+                ☀️ Sunray
+              </Button>
+
+              <Button
+                variant="outlined"
+                onClick={() => runIfPlanet(sendAsteroid)}
+                sx={{
+                  ...BTN.base,
+                  borderColor: BTN.asteroid.border,
+                  color: BTN.asteroid.color,
+                  "&:hover": {
+                    borderColor: BTN.asteroid.color,
+                    background: BTN.asteroid.hoverBg,
+                  },
+                }}
+              >
+                ☄️ Asteroid
+              </Button>
             </Stack>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              Select a planet to view statistics.
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
+          </Stack>
+        )}
+      </StyledCard>
 
-      <Card>
-        <CardContent>
-          <Typography variant="h6">Generation History</Typography>
-          {p && p.generationHistory.length > 0 ? (
-            <Stack spacing={0.5} sx={{ maxHeight: 200, overflow: 'auto' }}>
-              {p.generationHistory.slice(-10).reverse().map((entry, i) => (
-                <Typography key={i} variant="body2" color="text.secondary">
-                  {entry.resource}
+      {/* Energy Cells */}
+      <StyledCard>
+        {SECTION_TITLE("Energy Cells")}
+
+        {p ? (
+          <EnergyCellsView
+            total={p.cells.length}
+            charged={p.cells.filter((c) => c.charged).length}
+            resourceTotal={Math.min(3, p.cells.length)}
+            resourceCharged={
+              p.cells.slice(0, 3).filter((c) => c.charged).length
+            }
+            defenseTotal={Math.max(0, p.cells.length - 3)}
+            defenseCharged={p.cells.slice(3).filter((c) => c.charged).length}
+          />
+        ) : (
+          <Typography sx={{ fontSize: 13, color: "#6b7280" }}>
+            Select a planet to view energy cells.
+          </Typography>
+        )}
+      </StyledCard>
+
+      {/* Statistics */}
+      <StyledCard>
+        {SECTION_TITLE("Statistics")}
+
+        {p ? (
+          <Stack spacing={1}>
+            {stats!.map(([label, value]) => (
+              <Box
+                key={label}
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  p: 1.25,
+                  borderRadius: "10px",
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid rgba(255,255,255,0.05)",
+                }}
+              >
+                <Typography sx={{ fontSize: 13, color: "#9ca3af" }}>
+                  {label}
                 </Typography>
-              ))}
-            </Stack>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              {p ? 'No resources generated yet.' : 'Select a planet to view history.'}
-            </Typography>
-          )}
-        </CardContent>
-      </Card>
+                <Typography sx={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+                  {value}
+                </Typography>
+              </Box>
+            ))}
+          </Stack>
+        ) : (
+          <Typography sx={{ fontSize: 13, color: "#6b7280" }}>
+            Select a planet to view statistics.
+          </Typography>
+        )}
+      </StyledCard>
+
+      {/* History */}
+      <StyledCard>
+        {SECTION_TITLE("Generation History")}
+
+        {p?.generationHistory?.length ? (
+          <Stack spacing={1}>
+            {p.generationHistory.slice(-10).reverse().map((e, i) => (
+              <Box
+                key={i}
+                sx={{
+                  p: 1.25,
+                  borderRadius: "10px",
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid rgba(255,255,255,0.05)",
+                }}
+              >
+                <Typography sx={{ fontSize: 12, color: "#9ca3af", fontFamily: "monospace" }}>
+                  {e.resource}
+                </Typography>
+              </Box>
+            ))}
+          </Stack>
+        ) : (
+          <Typography sx={{ fontSize: 13, color: "#6b7280" }}>
+            {p ? "No resources generated yet." : "Select a planet to view history."}
+          </Typography>
+        )}
+      </StyledCard>
     </Stack>
-  )
+  );
 }

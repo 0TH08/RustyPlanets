@@ -1,107 +1,96 @@
-import { Card, CardContent, Chip, CircularProgress, List, ListItemButton, ListItemText, Stack, Typography } from '@mui/material'
-import { useEffect } from 'react'
+import { Box, Card, Chip, Stack, Typography } from "@mui/material";
+import { useEffect } from "react";
+import styled from "@emotion/styled";
 
-import { usePlanetStore } from '../store/planetStore'
-import { useSimulationStore } from '../store/simulationStore'
+import { usePlanetStore } from "../store/planetStore";
+import { SimulationBar } from "../components/SimulationBar";
+import { PlanetsView } from "../components/PlanetsView";
 
-type Mode = 'player' | 'debug'
+type Mode = "player" | "debug";
 
 interface OverviewPageProps {
-  mode: Mode
+  mode: Mode;
+}
+
+const StyledCard = styled(Card)({
+  background: "linear-gradient(145deg, #0f0f0f 0%, #050505 100%)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 16,
+  padding: 24,
+  position: "relative",
+  overflow: "hidden",
+
+  "&::before": {
+    content: '""',
+    position: "absolute",
+    inset: "0 0 auto 0",
+    height: 1,
+    background:
+      "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%)",
+  },
+});
+
+const titleStyle = {
+  fontSize: "14px",
+  fontWeight: 500,
+  color: "#9ca3af",
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+};
+
+const chipStyle = {
+  background: "rgba(239,68,68,0.12)",
+  color: "#f87171",
+  border: "1px solid rgba(239,68,68,0.25)",
+  fontSize: "10px",
+  fontWeight: 700,
+  letterSpacing: "0.05em",
+};
+
+const infoBoxStyle = {
+  p: 2,
+  borderRadius: "12px",
+  background: "rgba(255,255,255,0.02)",
+  border: "1px solid rgba(255,255,255,0.06)",
+};
+
+const descriptionStyle = {
+  fontSize: "13px",
+  color: "#9ca3af",
+  lineHeight: 1.7,
+};
+
+function DebugPanel() {
+  return (
+    <StyledCard>
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+        <Typography sx={titleStyle}>Debug Metrics</Typography>
+
+        <Chip label="DEBUG MODE" size="small" sx={chipStyle} />
+      </Box>
+
+      <Box sx={infoBoxStyle}>
+        <Typography sx={descriptionStyle}>
+          Internal engine metrics and diagnostics shown here in debug mode.
+        </Typography>
+      </Box>
+    </StyledCard>
+  );
 }
 
 export function OverviewPage({ mode }: OverviewPageProps) {
-  const { planets, selectedPlanetId, isLoadingList, error, loadPlanets, selectPlanet } = usePlanetStore()
-  const { runState, tick, speed } = useSimulationStore()
+  const { loadPlanets } = usePlanetStore();
 
   useEffect(() => {
-    if (!planets.length) {
-      void loadPlanets()
-    }
-  }, [loadPlanets, planets.length])
+    void loadPlanets();
+  }, [loadPlanets]);
 
   return (
     <Stack spacing={2}>
-      <Card>
-        <CardContent>
-          <Typography variant="h6">Simulation Status</Typography>
-          <Stack spacing={0.5} sx={{ mt: 1 }}>
-            <Typography variant="body2">
-              State: <strong>{runState}</strong>
-            </Typography>
-            <Typography variant="body2">
-              Tick: <strong>{tick}</strong>
-            </Typography>
-            <Typography variant="body2">
-              Speed: <strong>{speed.toFixed(1)}x</strong>
-            </Typography>
-            <Typography variant="body2">
-              Planets: <strong>{planets.length}</strong>
-            </Typography>
-          </Stack>
-        </CardContent>
-      </Card>
+      <SimulationBar />
+      <PlanetsView />
 
-      <Card>
-        <CardContent>
-          <Typography variant="h6">Planets ({planets.length})</Typography>
-          {isLoadingList && (
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1 }}>
-              <CircularProgress size={16} />
-              <Typography variant="body2" color="text.secondary">
-                Loading planets...
-              </Typography>
-            </Stack>
-          )}
-          {error && (
-            <Typography variant="body2" color="error" sx={{ mt: 1 }}>
-              {error}
-            </Typography>
-          )}
-          {!isLoadingList && !error && (
-            <List dense>
-              {planets.map((planet) => (
-                <ListItemButton
-                  key={planet.id}
-                  selected={planet.id === selectedPlanetId}
-                  onClick={() => void selectPlanet(planet.id)}
-                >
-                  <ListItemText
-                    primary={
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <span>{planet.name}</span>
-                        <Chip size="small" label={planet.kind} color="primary" variant="outlined" />
-                        <Chip 
-                          size="small" 
-                          label={planet.aiRunning ? 'AI Running' : 'AI Stopped'} 
-                          color={planet.aiRunning ? 'success' : 'default'} 
-                        />
-                      </Stack>
-                    }
-                    secondary={`Explorers: ${planet.explorerCount} · Generated: ${planet.totalResourcesGenerated} · Rockets: ${planet.rocketsBuilt}`}
-                  />
-                </ListItemButton>
-              ))}
-              {!planets.length && (
-                <Typography variant="body2" color="text.secondary">
-                  No planets available.
-                </Typography>
-              )}
-            </List>
-          )}
-        </CardContent>
-      </Card>
-
-      {mode === 'debug' && (
-        <Card>
-          <CardContent>
-            <Typography variant="h6">Debug Metrics</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Internal engine metrics and diagnostics shown here in debug mode.
-            </Typography>
-          </CardContent>
-        </Card>
-      )}
+      {mode === "debug" && <DebugPanel />}
     </Stack>
-  )
+  );
 }

@@ -1,156 +1,353 @@
-import { Box, Button, Card, CardActions, CardContent, Slider, Stack, Typography } from '@mui/material'
-import { useEffect, useState } from 'react'
+import {
+  Box,
+  Button,
+  Chip,
+  Slider,
+  Stack,
+  Typography,
+  Card,
+  styled,
+  CircularProgress,
+} from "@mui/material";
 
+import { useEffect, useState } from "react";
 import {
   getSimulationStatus,
   setSimulationRunState,
   setSimulationSpeed,
   stepSimulation,
   resetSimulation,
-} from '../services/simulationService'
-import { useSimulationStore } from '../store/simulationStore'
+} from "../services/simulationService";
 
-type Mode = 'player' | 'debug'
+import { useSimulationStore } from "../store/simulationStore";
+
+type Mode = "player" | "debug";
 
 interface SimulationPageProps {
-  mode: Mode
+  mode: Mode;
 }
 
+const StyledCard = styled(Card)({
+  background: "linear-gradient(145deg, #0f0f0f 0%, #050505 100%)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 16,
+  padding: 24,
+  position: "relative",
+  overflow: "hidden",
+
+  "&::before": {
+    content: '""',
+    position: "absolute",
+    inset: "0 0 auto 0",
+    height: 1,
+    background:
+      "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%)",
+  },
+});
+
+const RUN_STATE = {
+  running: {
+    bg: "rgba(34,197,94,0.15)",
+    color: "#4ade80",
+    border: "1px solid rgba(34,197,94,0.4)",
+  },
+  paused: {
+    bg: "rgba(249,115,22,0.15)",
+    color: "#fb923c",
+    border: "1px solid rgba(249,115,22,0.35)",
+  },
+  idle: {
+    bg: "rgba(107,114,128,0.2)",
+    color: "#9ca3af",
+    border: "1px solid rgba(107,114,128,0.3)",
+  },
+} as const;
+
+const BUTTONS = [
+  {
+    label: "▶ Start",
+    onClick: "start",
+    variant: "contained",
+    color: {
+      bg: "linear-gradient(135deg, #22c55e 0%, #16a34a 100%)",
+      hover: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
+      border: null,
+      text: "#fff",
+    },
+  },
+  {
+    label: "⏸ Pause",
+    onClick: "pause",
+    variant: "outlined",
+    color: {
+      bg: "transparent",
+      hover: "rgba(249,115,22,0.08)",
+      border: "rgba(249,115,22,0.3)",
+      text: "#fb923c",
+      hoverBorder: "#fb923c",
+    },
+  },
+  {
+    label: "⏭ Step",
+    onClick: "step",
+    variant: "outlined",
+    color: {
+      bg: "transparent",
+      hover: "rgba(99,102,241,0.08)",
+      border: "rgba(99,102,241,0.3)",
+      text: "#818cf8",
+      hoverBorder: "#818cf8",
+    },
+  },
+  {
+    label: "🔄 Reset",
+    onClick: "reset",
+    variant: "outlined",
+    color: {
+      bg: "transparent",
+      hover: "rgba(14,165,233,0.08)",
+      border: "rgba(14,165,233,0.3)",
+      text: "#38bdf8",
+      hoverBorder: "#38bdf8",
+    },
+  },
+  {
+    label: "⏹ Stop",
+    onClick: "idle",
+    variant: "outlined",
+    color: {
+      bg: "transparent",
+      hover: "rgba(239,68,68,0.08)",
+      border: "rgba(239,68,68,0.3)",
+      text: "#f87171",
+      hoverBorder: "#f87171",
+    },
+  },
+];
+
 export function SimulationPage({ mode }: SimulationPageProps) {
-  const { runState, tick, speed, isBusy, setRunState, setSpeed, setTick, setBusy } = useSimulationStore()
-  const [localSpeed, setLocalSpeed] = useState(speed)
+  const {
+    runState,
+    tick,
+    speed,
+    isBusy,
+    setRunState,
+    setSpeed,
+    setTick,
+    setBusy,
+  } = useSimulationStore();
+
+  const [localSpeed, setLocalSpeed] = useState(speed);
 
   useEffect(() => {
-    ;(async () => {
-      setBusy(true)
+    (async () => {
+      setBusy(true);
       try {
-        const status = await getSimulationStatus()
-        setRunState(status.runState)
-        setSpeed(status.speed)
+        const status = await getSimulationStatus();
+        setRunState(status.runState);
+        setSpeed(status.speed);
       } finally {
-        setBusy(false)
+        setBusy(false);
       }
-    })()
-  }, [setBusy, setRunState, setSpeed])
+    })();
+  }, [setBusy, setRunState, setSpeed]);
 
-  const handleStart = async () => {
-    setBusy(true)
+  const withBusy = async (fn: () => Promise<any>) => {
+    setBusy(true);
     try {
-      const status = await setSimulationRunState('running')
-      setRunState(status.runState)
+      return await fn();
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
 
-  const handlePause = async () => {
-    setBusy(true)
-    try {
-      const status = await setSimulationRunState('paused')
-      setRunState(status.runState)
-    } finally {
-      setBusy(false)
-    }
-  }
+  const actions = {
+    start: () =>
+      withBusy(async () => {
+        const s = await setSimulationRunState("running");
+        setRunState(s.runState);
+      }),
 
-  const handleStep = async () => {
-    setBusy(true)
-    try {
-      const status = await stepSimulation()
-      setRunState(status.runState)
-    } finally {
-      setBusy(false)
-    }
-  }
+    pause: () =>
+      withBusy(async () => {
+        const s = await setSimulationRunState("paused");
+        setRunState(s.runState);
+      }),
 
-  const handleSpeedCommit = async (_: unknown, value: number | number[]) => {
-    const v = Array.isArray(value) ? value[0] : value
-    setLocalSpeed(v)
-    setBusy(true)
-    try {
-      const status = await setSimulationSpeed(v)
-      setSpeed(status.speed)
-    } finally {
-      setBusy(false)
-    }
-  }
+    step: () =>
+      withBusy(async () => {
+        const s = await stepSimulation();
+        setRunState(s.runState);
+      }),
 
-  const handleReset = async () => {
-    setBusy(true)
-    try {
-      const status = await resetSimulation()
-      setRunState(status.runState)
-      setSpeed(status.speed)
-      setTick(0)
-    } finally {
-      setBusy(false)
-    }
-  }
+    reset: () =>
+      withBusy(async () => {
+        const s = await resetSimulation();
+        setRunState(s.runState);
+        setSpeed(s.speed);
+        setTick(0);
+      }),
 
-  const handleIdle = async () => {
-    setBusy(true)
-    try {
-      const status = await setSimulationRunState('idle')
-      setRunState(status.runState)
-      setTick(0)
-    } finally {
-      setBusy(false)
-    }
-  }
+    idle: () =>
+      withBusy(async () => {
+        const s = await setSimulationRunState("idle");
+        setRunState(s.runState);
+        setTick(0);
+      }),
+  };
+
+  const handleSpeedCommit = (_: unknown, value: number | number[]) =>
+    withBusy(async () => {
+      const v = Array.isArray(value) ? value[0] : value;
+      setLocalSpeed(v);
+      const s = await setSimulationSpeed(v);
+      setSpeed(s.speed);
+    });
+
+  const stateStyle =
+    RUN_STATE[runState as keyof typeof RUN_STATE] ?? RUN_STATE.idle;
 
   return (
-    <Card>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>
+    <StyledCard>
+      {/* Header */}
+      <Box display="flex" justifyContent="space-between" mb={2}>
+        <Typography
+          sx={{
+            fontSize: 14,
+            fontWeight: 500,
+            color: "#9ca3af",
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+          }}
+        >
           Simulation Controls
         </Typography>
-        <Stack spacing={2}>
-          <Box>
-            <Typography variant="body2" color="text.secondary">
-              Control the simulation state, speed, and tick progression.
+
+        <Chip
+          label={runState.toUpperCase()}
+          size="small"
+          sx={{
+            background: stateStyle.bg,
+            color: stateStyle.color,
+            border: stateStyle.border,
+            fontSize: 11,
+            fontWeight: 700,
+          }}
+        />
+      </Box>
+
+      <Stack spacing={2}>
+        {/* Info */}
+        <Box
+          sx={{
+            p: 2,
+            borderRadius: 2,
+            background: "rgba(255,255,255,0.02)",
+            border: "1px solid rgba(255,255,255,0.06)",
+          }}
+        >
+          <Typography sx={{ fontSize: 13, color: "#9ca3af" }}>
+            Control the simulation state, speed, and tick progression.
+          </Typography>
+
+          <Typography sx={{ fontSize: 13, color: "#fff", mt: 1 }}>
+            State: <strong>{runState}</strong> · Tick:{" "}
+            <strong>{tick}</strong>
+          </Typography>
+        </Box>
+
+        {/* Busy */}
+        {isBusy && (
+          <Stack direction="row" spacing={1} alignItems="center">
+            <CircularProgress size={16} />
+            <Typography sx={{ fontSize: 13, color: "#9ca3af" }}>
+              Updating simulation...
             </Typography>
-            <Typography variant="body2" sx={{ mt: 1 }}>
-              State: <strong>{runState}</strong> · Tick: <strong>{tick}</strong>
-            </Typography>
-          </Box>
-          <Box display="flex" gap={1} flexWrap="wrap">
-            <Button variant="contained" color="primary" onClick={handleStart} disabled={isBusy || runState === 'running'}>
-              ▶ Start
+          </Stack>
+        )}
+
+        {/* Buttons */}
+        <Stack direction="row" spacing={1} flexWrap="wrap">
+          {BUTTONS.map((btn) => (
+            <Button
+              key={btn.label}
+              variant={btn.variant as any}
+              disabled={
+                isBusy ||
+                (btn.onClick === "start" && runState === "running") ||
+                (btn.onClick === "pause" && runState !== "running")
+              }
+              onClick={actions[btn.onClick as keyof typeof actions]}
+              sx={{
+                background:
+                  btn.variant === "contained"
+                    ? btn.color.bg
+                    : "transparent",
+
+                borderColor: btn.color.border ?? undefined,
+                color: btn.color.text,
+
+                borderRadius: "10px",
+                textTransform: "none",
+                fontWeight: 600,
+
+                "&:hover": {
+                  background: btn.color.hover,
+                  borderColor: btn.color.hoverBorder ?? undefined,
+                },
+              }}
+            >
+              {btn.label}
             </Button>
-            <Button variant="outlined" color="primary" onClick={handlePause} disabled={isBusy || runState !== 'running'}>
-              ⏸ Pause
-            </Button>
-            <Button variant="outlined" color="secondary" onClick={handleStep} disabled={isBusy}>
-              ⏭ Step
-            </Button>
-            <Button variant="outlined" color="warning" onClick={handleReset} disabled={isBusy}>
-              🔄 Reset
-            </Button>
-            <Button variant="text" color="error" onClick={handleIdle} disabled={isBusy}>
-              ⏹ Stop
-            </Button>
-          </Box>
-          <Box>
-            <Typography gutterBottom>Speed ({speed.toFixed(1)}x)</Typography>
-            <Slider
-              min={0.1}
-              max={5}
-              step={0.1}
-              value={localSpeed}
-              onChange={(_, value) => setLocalSpeed(Array.isArray(value) ? value[0] : value)}
-              onChangeCommitted={handleSpeedCommit}
-            />
-          </Box>
-          {mode === 'debug' && (
-            <Box>
-              <Typography variant="body2" color="text.secondary">
-                Debug mode: Additional controls for seed, forced events, etc. can be added here.
-              </Typography>
-            </Box>
-          )}
+          ))}
         </Stack>
-      </CardContent>
-      <CardActions />
-    </Card>
-  )
+
+        {/* Slider */}
+        <Box
+          sx={{
+            p: 2,
+            borderRadius: 2,
+            background: "rgba(255,255,255,0.02)",
+            border: "1px solid rgba(255,255,255,0.06)",
+          }}
+        >
+          <Typography sx={{ fontSize: 13, color: "#9ca3af", mb: 2 }}>
+            Simulation Speed ({localSpeed.toFixed(1)}x)
+          </Typography>
+
+          <Slider
+            min={0.1}
+            max={5}
+            step={0.1}
+            value={localSpeed}
+            onChange={(_, v) =>
+              setLocalSpeed(Array.isArray(v) ? v[0] : v)
+            }
+            onChangeCommitted={handleSpeedCommit}
+            sx={{
+              color: "#818cf8",
+              "& .MuiSlider-thumb": { width: 14, height: 14 },
+              "& .MuiSlider-track": { border: "none" },
+            }}
+          />
+        </Box>
+
+        {/* Debug */}
+        {mode === "debug" && (
+          <Box
+            sx={{
+              p: 2,
+              borderRadius: 2,
+              background: "rgba(239,68,68,0.04)",
+              border: "1px solid rgba(239,68,68,0.12)",
+            }}
+          >
+            <Typography sx={{ fontSize: 13, color: "#f87171" }}>
+              Debug mode enabled. Additional diagnostics can be added here.
+            </Typography>
+          </Box>
+        )}
+      </Stack>
+    </StyledCard>
+  );
 }

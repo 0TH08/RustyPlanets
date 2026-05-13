@@ -2,7 +2,6 @@ import {
   Box,
   Button,
   Card,
-  CardContent,
   Chip,
   FormControl,
   InputLabel,
@@ -10,122 +9,370 @@ import {
   Select,
   Stack,
   Typography,
-} from '@mui/material'
-import { useEffect, useMemo } from 'react'
+  styled,
+} from "@mui/material";
 
-import { useLogStore } from '../store/logStore'
+import { useEffect, useMemo } from "react";
+import { useLogStore } from "../store/logStore";
 
-type Mode = 'player' | 'debug'
+type Mode = "player" | "debug";
 
 interface LogsPageProps {
-  mode: Mode
+  mode: Mode;
 }
+
+const StyledCard = styled(Card)({
+  background: "linear-gradient(145deg, #0f0f0f 0%, #050505 100%)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 16,
+  padding: 24,
+  position: "relative",
+  overflow: "hidden",
+
+  "&::before": {
+    content: '""',
+    position: "absolute",
+    inset: "0 0 auto 0",
+    height: 1,
+    background:
+      "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%)",
+  },
+});
+
+const LEVEL_STYLES = {
+  error: {
+    bg: "rgba(239,68,68,0.06)",
+    border: "1px solid rgba(239,68,68,0.12)",
+    chipBg: "rgba(239,68,68,0.15)",
+    chipColor: "#f87171",
+    chipBorder: "1px solid rgba(239,68,68,0.3)",
+  },
+
+  warn: {
+    bg: "rgba(249,115,22,0.06)",
+    border: "1px solid rgba(249,115,22,0.12)",
+    chipBg: "rgba(249,115,22,0.15)",
+    chipColor: "#fb923c",
+    chipBorder: "1px solid rgba(249,115,22,0.3)",
+  },
+
+  info: {
+    bg: "rgba(59,130,246,0.05)",
+    border: "1px solid rgba(59,130,246,0.1)",
+    chipBg: "rgba(59,130,246,0.15)",
+    chipColor: "#60a5fa",
+    chipBorder: "1px solid rgba(59,130,246,0.25)",
+  },
+
+  debug: {
+    bg: "rgba(255,255,255,0.02)",
+    border: "1px solid rgba(255,255,255,0.05)",
+    chipBg: "rgba(107,114,128,0.2)",
+    chipColor: "#9ca3af",
+    chipBorder: "1px solid rgba(107,114,128,0.3)",
+  },
+};
+
+const levels = ["all", "debug", "info", "warn", "error"];
 
 export function LogsPage({ mode }: LogsPageProps) {
-  const { logs, levelFilter, isStreaming, startMockStream, stopMockStream, setLevelFilter } = useLogStore()
+  const {
+    logs,
+    levelFilter,
+    isStreaming,
+    startMockStream,
+    stopMockStream,
+    setLevelFilter,
+  } = useLogStore();
 
   useEffect(() => {
-    // Автоматически запускаем мок‑стрим при открытии вкладки
-    if (!isStreaming) {
-      startMockStream()
-    }
-    return () => {
-      // Не останавливаем при уходе со страницы, чтобы логи могли продолжать течь,
-      // но можем это поменять позже.
-    }
-  }, [isStreaming, startMockStream])
+    if (!isStreaming) startMockStream();
+  }, [isStreaming, startMockStream]);
 
-  const visibleLogs = useMemo(
-    () => (levelFilter === 'all' ? logs : logs.filter((l) => l.level === levelFilter)),
-    [levelFilter, logs],
-  )
+  const visibleLogs = useMemo(() => {
+    if (levelFilter === "all") return logs;
+
+    return logs.filter((log) => log.level === levelFilter);
+  }, [logs, levelFilter]);
+
+  const streamLabel = isStreaming ? "STREAMING" : "PAUSED";
 
   return (
-    <Card sx={{ height: '100%' }}>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>
-          Logs
-        </Typography>
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-          <FormControl size="small">
-            <InputLabel id="log-level-label">Level</InputLabel>
-            <Select
-              labelId="log-level-label"
-              label="Level"
-              value={levelFilter}
-              onChange={(e) => setLevelFilter(e.target.value as typeof levelFilter)}
-            >
-              <MenuItem value="all">All</MenuItem>
-              <MenuItem value="debug">Debug</MenuItem>
-              <MenuItem value="info">Info</MenuItem>
-              <MenuItem value="warn">Warn</MenuItem>
-              <MenuItem value="error">Error</MenuItem>
-            </Select>
-          </FormControl>
-          <Button
-            size="small"
-            variant={isStreaming ? 'outlined' : 'contained'}
-            color={isStreaming ? 'inherit' : 'primary'}
-            onClick={isStreaming ? stopMockStream : startMockStream}
-          >
-            {isStreaming ? 'Pause stream' : 'Start stream'}
-          </Button>
-          {mode !== 'debug' && (
-            <Typography variant="body2" color="warning.main">
-              In player mode, very low-level logs may be hidden in the future.
-            </Typography>
-          )}
-        </Stack>
-        <Box
-          component="div"
+    <StyledCard sx={{ height: "100%" }}>
+      {/* Header */}
+      <Box
+        display="flex"
+        alignItems="center"
+        justifyContent="space-between"
+        mb={2}
+      >
+        <Typography
           sx={{
-            mt: 1,
-            p: 1,
-            bgcolor: 'background.default',
-            borderRadius: 1,
-            fontFamily: 'monospace',
-            fontSize: 12,
-            maxHeight: 360,
-            overflowY: 'auto',
+            fontSize: 14,
+            fontWeight: 500,
+            color: "#9ca3af",
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
           }}
         >
-          {visibleLogs.map((log) => (
-            <Box key={log.id} sx={{ mb: 0.5 }}>
-              <Typography component="span" sx={{ color: 'text.disabled', mr: 1 }}>
-                {new Date(log.timestamp).toLocaleTimeString()}
-              </Typography>
-              <Chip
-                size="small"
-                label={log.level.toUpperCase()}
-                color={
-                  log.level === 'error'
-                    ? 'error'
-                    : log.level === 'warn'
-                      ? 'warning'
-                      : log.level === 'info'
-                        ? 'primary'
-                        : 'default'
-                }
-                sx={{ mr: 1, height: 18, '& .MuiChip-label': { px: 0.5 } }}
-              />
-              {log.planetId != null && (
-                <Typography component="span" sx={{ color: 'text.secondary', mr: 1 }}>
-                  [planet {log.planetId}]
-                </Typography>
-              )}
-              <Typography component="span" sx={{ color: 'text.primary' }}>
-                {log.message}
-              </Typography>
-            </Box>
-          ))}
-          {!visibleLogs.length && (
-            <Typography variant="body2" color="text.secondary">
-              No logs yet. The mock stream will start producing entries shortly.
-            </Typography>
-          )}
-        </Box>
-      </CardContent>
-    </Card>
-  )
-}
+          System Logs
+        </Typography>
 
+        <Chip
+          label={streamLabel}
+          size="small"
+          sx={{
+            background: isStreaming
+              ? "rgba(34,197,94,0.15)"
+              : "rgba(107,114,128,0.2)",
+
+            color: isStreaming ? "#4ade80" : "#9ca3af",
+
+            border: isStreaming
+              ? "1px solid rgba(34,197,94,0.4)"
+              : "1px solid rgba(107,114,128,0.3)",
+
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: "0.05em",
+          }}
+        />
+      </Box>
+
+      <Stack spacing={2}>
+        {/* Controls */}
+        <Box
+          sx={{
+            p: 2,
+            borderRadius: 3,
+            background: "rgba(255,255,255,0.02)",
+            border: "1px solid rgba(255,255,255,0.06)",
+          }}
+        >
+          <Stack
+            direction="row"
+            spacing={2}
+            alignItems="center"
+            flexWrap="wrap"
+          >
+            <FormControl size="small">
+              <InputLabel
+                id="log-level-label"
+                sx={{ color: "#9ca3af" }}
+              >
+                Level
+              </InputLabel>
+
+              <Select
+                labelId="log-level-label"
+                label="Level"
+                value={levelFilter}
+                onChange={(e) =>
+                  setLevelFilter(
+                    e.target.value as typeof levelFilter
+                  )
+                }
+                sx={{
+                  minWidth: 140,
+                  borderRadius: "10px",
+                  color: "#fff",
+
+                  "& .MuiOutlinedInput-notchedOutline": {
+                    borderColor: "rgba(255,255,255,0.1)",
+                  },
+
+                  "&:hover .MuiOutlinedInput-notchedOutline": {
+                    borderColor: "rgba(99,102,241,0.4)",
+                  },
+
+                  "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+                    borderColor: "#818cf8",
+                  },
+
+                  "& .MuiSvgIcon-root": {
+                    color: "#9ca3af",
+                  },
+                }}
+              >
+                {levels.map((level) => (
+                  <MenuItem
+                    key={level}
+                    value={level}
+                  >
+                    {level[0].toUpperCase() +
+                      level.slice(1)}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <Button
+              size="small"
+              variant={
+                isStreaming ? "outlined" : "contained"
+              }
+              onClick={
+                isStreaming
+                  ? stopMockStream
+                  : startMockStream
+              }
+              sx={{
+                background: !isStreaming
+                  ? "linear-gradient(135deg, #22c55e 0%, #16a34a 100%)"
+                  : "transparent",
+
+                borderColor: isStreaming
+                  ? "rgba(249,115,22,0.3)"
+                  : undefined,
+
+                color: isStreaming
+                  ? "#fb923c"
+                  : "#fff",
+
+                borderRadius: "10px",
+                textTransform: "none",
+                fontWeight: 600,
+                boxShadow: "none",
+
+                "&:hover": {
+                  background: isStreaming
+                    ? "rgba(249,115,22,0.08)"
+                    : "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
+                },
+              }}
+            >
+              {isStreaming
+                ? "Pause Stream"
+                : "Start Stream"}
+            </Button>
+
+            {mode !== "debug" && (
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  color: "#fb923c",
+                }}
+              >
+                In player mode, very low-level logs may
+                be hidden in the future.
+              </Typography>
+            )}
+          </Stack>
+        </Box>
+
+        {/* Terminal */}
+        <Box
+          sx={{
+            p: 2,
+            borderRadius: 3,
+            background: "#050505",
+            border: "1px solid rgba(255,255,255,0.06)",
+            fontFamily: "monospace",
+            maxHeight: 420,
+            overflowY: "auto",
+
+            "&::-webkit-scrollbar": {
+              width: 8,
+            },
+
+            "&::-webkit-scrollbar-thumb": {
+              background: "rgba(255,255,255,0.08)",
+              borderRadius: 10,
+            },
+          }}
+        >
+          <Stack spacing={1}>
+            {visibleLogs.map((log) => {
+              const styles =
+                LEVEL_STYLES[log.level] ??
+                LEVEL_STYLES.debug;
+
+              return (
+                <Box
+                  key={log.id}
+                  sx={{
+                    p: 1,
+                    borderRadius: "10px",
+                    background: styles.bg,
+                    border: styles.border,
+                  }}
+                >
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="center"
+                    flexWrap="wrap"
+                  >
+                    <Typography
+                      component="span"
+                      sx={{
+                        fontSize: 11,
+                        color: "#6b7280",
+                      }}
+                    >
+                      {new Date(
+                        log.timestamp
+                      ).toLocaleTimeString()}
+                    </Typography>
+
+                    <Chip
+                      size="small"
+                      label={log.level.toUpperCase()}
+                      sx={{
+                        height: 18,
+                        background: styles.chipBg,
+                        color: styles.chipColor,
+                        border: styles.chipBorder,
+
+                        "& .MuiChip-label": {
+                          px: 0.75,
+                          fontWeight: 700,
+                          fontSize: 10,
+                        },
+                      }}
+                    />
+
+                    {log.planetId != null && (
+                      <Typography
+                        component="span"
+                        sx={{
+                          fontSize: 11,
+                          color: "#818cf8",
+                        }}
+                      >
+                        [planet {log.planetId}]
+                      </Typography>
+                    )}
+
+                    <Typography
+                      component="span"
+                      sx={{
+                        fontSize: 12,
+                        color: "#e5e7eb",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {log.message}
+                    </Typography>
+                  </Stack>
+                </Box>
+              );
+            })}
+
+            {!visibleLogs.length && (
+              <Typography
+                sx={{
+                  fontSize: 13,
+                  color: "#6b7280",
+                }}
+              >
+                No logs yet. The stream will begin
+                producing entries shortly.
+              </Typography>
+            )}
+          </Stack>
+        </Box>
+      </Stack>
+    </StyledCard>
+  );
+}
