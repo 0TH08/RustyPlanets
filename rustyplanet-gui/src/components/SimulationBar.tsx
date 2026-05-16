@@ -52,14 +52,7 @@ const SimTitles = {
 };
 
 export function SimulationBar() {
-  const {
-    planets,
-    selectedPlanetId,
-    isLoadingList,
-    error,
-    loadPlanets,
-    selectPlanet,
-  } = usePlanetStore();
+  const { planets } = usePlanetStore();
   const { runState, tick, speed } = useSimulationStore();
 
   useEffect(() => {

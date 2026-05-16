@@ -9,6 +9,8 @@ use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetTo
 use common_game::protocols::planet_explorer::ExplorerToPlanet;
 use common_game::utils::ID;
 use crossbeam_channel::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use crate::planet_telemetry::{SharedPlanetStats, StatsTrackingAI};
 
 /// Creates and initializes a new instance of the `BlackAdidasShoe` Planet.
 /// -`rx_orchestrator`: Orchestrator to Planet Receiver
@@ -42,4 +44,27 @@ pub fn create_planet(
         (rx_orchestrator, tx_orchestrator),
         rx_explorer,
     )
+}
+
+pub fn create_planet_with_stats(
+    rx_orchestrator: Receiver<OrchestratorToPlanet>,
+    tx_orchestrator: Sender<PlanetToOrchestrator>,
+    rx_explorer: Receiver<ExplorerToPlanet>,
+    planet_id: ID,
+) -> Result<(Planet, Arc<Mutex<SharedPlanetStats>>), String> {
+    let stats = Arc::new(Mutex::new(SharedPlanetStats::default()));
+    let ai = StatsTrackingAI {
+        inner: BlackAdidasShoe::new(false),
+        stats: Arc::clone(&stats),
+    };
+    let planet = Planet::new(
+        planet_id,
+        PlanetType::D,
+        Box::new(ai),
+        vec![BasicResourceType::Oxygen, BasicResourceType::Hydrogen, BasicResourceType::Carbon],
+        vec![],
+        (rx_orchestrator, tx_orchestrator),
+        rx_explorer,
+    )?;
+    Ok((planet, stats))
 }

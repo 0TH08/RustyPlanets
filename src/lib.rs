@@ -161,33 +161,63 @@ pub fn create_planet_with_telemetry(
         None::<[(&str, String); 0]>,
     );
 
-    // For now, only Skycartel is fully implemented with telemetry
-    let (planet, ai_state) = match planet_type {
+    let (planet, telemetry_obj): (_, Box<dyn planet_telemetry::PlanetTelemetry>) = match planet_type {
         PlanetType::Skycartel => {
             let planet_impl = RustyPlanet::new(id)
                 .map_err(|e| format!("Failed to create Skycartel planet handle: {e}"))?;
-            planet_impl
+            let (planet, state) = planet_impl
                 .create_planet_with_ai_state(rx_orchestrator, tx_orchestrator, rx_explorer)
-                .map_err(|e| format!("Failed to create planet: {e}"))?
+                .map_err(|e| format!("Failed to create planet: {e}"))?;
+            let tel = Box::new(planet_telemetry::SkycartelTelemetry {
+                state,
+                ai_running: ai_running.clone(),
+            });
+            (planet, tel)
         }
         PlanetType::Luna4 => {
-            let ai = planet_ai::luna4::Luna4::new(id)
-                .map_err(|e| format!("Failed to create Luna4 planet handle: {e}"))?;
-            let planet = ai.create_planet(rx_orchestrator, tx_orchestrator, rx_explorer)
+            let (planet, stats) = planet_ai::luna4::Luna4::new(id)
+                .map_err(|e| format!("Failed to create Luna4 planet handle: {e}"))?
+                .create_planet_with_stats(rx_orchestrator, tx_orchestrator, rx_explorer)
                 .map_err(|e| format!("Failed to create planet: {e}"))?;
-            // TODO: wire telemetry for Luna4
-            return Ok(planet);
+            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
         }
-        _ => {
-            return Err(format!("{:?} planet creation with telemetry not yet implemented", planet_type));
+        PlanetType::BlackAdidasShoe => {
+            let (planet, stats) = planet_ai::blackadidasshoe::planet::create_planet_with_stats(
+                rx_orchestrator, tx_orchestrator, rx_explorer, id,
+            )?;
+            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
+        }
+        PlanetType::ImmutableCosmicBorrow => {
+            use std::time::Duration;
+            let (planet, stats) = planet_ai::immutablecosmicborrow::create_planet_with_stats(
+                false, 1.0, 1.0,
+                Duration::from_secs(30),
+                Duration::from_secs(1),
+                id,
+                (rx_orchestrator, tx_orchestrator),
+                rx_explorer,
+            )?;
+            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
+        }
+        PlanetType::Rusteze => {
+            let (planet, stats) = planet_ai::rusteze::ai::create_planet_with_stats(
+                id, rx_orchestrator, tx_orchestrator, rx_explorer,
+            )?;
+            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
+        }
+        PlanetType::Crabtorio => {
+            let (planet, stats) = planet_ai::crabtorio::ai::create_planet_with_stats(
+                id, (rx_orchestrator, tx_orchestrator), rx_explorer,
+            )?;
+            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
+        }
+        PlanetType::Orbitron => {
+            let (planet, stats) = planet_ai::orbitron::ai::create_planet_with_stats(
+                id, rx_orchestrator, tx_orchestrator, rx_explorer,
+            )?;
+            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
         }
     };
-
-    let telemetry_obj: Box<dyn planet_telemetry::PlanetTelemetry> =
-        Box::new(planet_telemetry::SkycartelTelemetry {
-            state: ai_state,
-            ai_running: ai_running.clone(),
-        });
 
     telemetry.register_planet(
         id,

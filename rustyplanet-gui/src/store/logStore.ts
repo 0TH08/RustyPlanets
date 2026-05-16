@@ -2,49 +2,67 @@ import { create } from 'zustand'
 
 import type { LogEntry, LogLevel } from '../types/logs'
 
+const WS_URL = 'ws://localhost:8080/ws/logs'
+
+interface BackendLogEntry {
+  timestamp: string
+  level: string
+  target: string
+  message: string
+}
+
 interface LogState {
   logs: LogEntry[]
   levelFilter: LogLevel | 'all'
   isStreaming: boolean
-  startMockStream: () => void
-  stopMockStream: () => void
+  startStream: () => void
+  stopStream: () => void
   setLevelFilter: (level: LogState['levelFilter']) => void
 }
 
-let intervalId: number | null = null
+let ws: WebSocket | null = null
 
 export const useLogStore = create<LogState>((set) => ({
   logs: [],
   levelFilter: 'all',
   isStreaming: false,
-  startMockStream: () => {
-    if (intervalId !== null) return
+
+  startStream: () => {
+    if (ws && ws.readyState === WebSocket.OPEN) return
+    ws = new WebSocket(WS_URL)
     set({ isStreaming: true })
-    intervalId = window.setInterval(() => {
-      const now = new Date()
-      const levels: LogLevel[] = ['debug', 'info', 'warn', 'error']
-      const level = levels[Math.floor(Math.random() * levels.length)]
-      const id = `${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`
-      const entry: LogEntry = {
-        id,
-        timestamp: now.toISOString(),
-        level,
-        source: 'mock-engine',
-        planetId: Math.random() > 0.5 ? 1 : undefined,
-        message: `Sample ${level} message at ${now.toLocaleTimeString()}`,
+
+    ws.onmessage = (event) => {
+      try {
+        const raw: BackendLogEntry = JSON.parse(event.data as string)
+        const entry: LogEntry = {
+          id: `${raw.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: raw.timestamp,
+          level: raw.level.toLowerCase() as LogLevel,
+          source: raw.target,
+          message: raw.message,
+        }
+        set((state) => ({ logs: [...state.logs.slice(-199), entry] }))
+      } catch {
+        // ignore malformed frames
       }
-      set((state) => ({
-        logs: [...state.logs.slice(-199), entry],
-      }))
-    }, 1000)
-  },
-  stopMockStream: () => {
-    if (intervalId !== null) {
-      window.clearInterval(intervalId)
-      intervalId = null
     }
+
+    ws.onclose = () => {
+      ws = null
+      set({ isStreaming: false })
+    }
+
+    ws.onerror = () => {
+      ws?.close()
+    }
+  },
+
+  stopStream: () => {
+    ws?.close()
+    ws = null
     set({ isStreaming: false })
   },
+
   setLevelFilter: (levelFilter) => set({ levelFilter }),
 }))
-

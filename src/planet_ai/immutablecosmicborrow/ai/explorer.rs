@@ -100,7 +100,8 @@ fn generate_resource(
             .make_hydrogen(state.cell_mut(0))
             .ok()
             .map(BasicResource::Hydrogen),
-        _ => panic!("ICB planet can not generate any resource other than Hydrogen"),
+        // ICB only supports Hydrogen; return None for any other request
+        _ => None,
     };
 
     let mut payload = Payload::new();

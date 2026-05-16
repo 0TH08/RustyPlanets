@@ -199,6 +199,7 @@ pub struct TelemetryHub {
     pub sim_status: Arc<SimStatus>,
     pub planets: Arc<RwLock<HashMap<u32, PlanetEntry>>>,
     pub explorers: Arc<RwLock<HashMap<u32, ExplorerEntry>>>,
+    pub explorer_planet: Arc<RwLock<HashMap<u32, u32>>>,
 }
 
 impl TelemetryHub {
@@ -207,7 +208,12 @@ impl TelemetryHub {
             sim_status: Arc::new(SimStatus::new()),
             planets: Arc::new(RwLock::new(HashMap::new())),
             explorers: Arc::new(RwLock::new(HashMap::new())),
+            explorer_planet: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub fn update_explorer_planet(&self, explorer_id: u32, planet_id: u32) {
+        self.explorer_planet.write().unwrap().insert(explorer_id, planet_id);
     }
 
     pub fn set_speed(&self, speed: f32) {

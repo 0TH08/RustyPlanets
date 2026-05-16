@@ -80,14 +80,15 @@ export function LogsPage({ mode }: LogsPageProps) {
     logs,
     levelFilter,
     isStreaming,
-    startMockStream,
-    stopMockStream,
+    startStream,
+    stopStream,
     setLevelFilter,
   } = useLogStore();
 
   useEffect(() => {
-    if (!isStreaming) startMockStream();
-  }, [isStreaming, startMockStream]);
+    startStream();
+    return () => stopStream();
+  }, []);
 
   const visibleLogs = useMemo(() => {
     if (levelFilter === "all") return logs;
@@ -213,8 +214,8 @@ export function LogsPage({ mode }: LogsPageProps) {
               }
               onClick={
                 isStreaming
-                  ? stopMockStream
-                  : startMockStream
+                  ? stopStream
+                  : startStream
               }
               sx={{
                 background: !isStreaming

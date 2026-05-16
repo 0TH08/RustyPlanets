@@ -1,7 +1,4 @@
-import { useEffect } from "react";
-
 import { usePlanetStore } from "../store/planetStore";
-import { useSimulationStore } from "../store/simulationStore";
 import {
   Avatar,
   Box,
@@ -79,7 +76,6 @@ export function PlanetsView() {
     selectedPlanetId,
     isLoadingList,
     error,
-    loadPlanets,
     selectPlanet,
   } = usePlanetStore();
 

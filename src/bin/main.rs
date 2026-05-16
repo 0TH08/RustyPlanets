@@ -4,8 +4,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::Method;
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use crossbeam_channel::Sender;
@@ -24,7 +26,7 @@ use skycartel::create_planet;
 use skycartel::create_planet_with_telemetry;
 use skycartel::explorer::{Bag, Explorer};
 use skycartel::planet_telemetry::{CellState, GenerationEntry};
-use skycartel::telemetry::{PlanetEntry, PlanetKind, RunState, TelemetryHub};
+use skycartel::telemetry::{ExplorerTelemetry, PlanetEntry, PlanetKind, RunState, TelemetryHub};
 use skycartel::PlanetType;
 
 // ── App state ─────────────────────────────────────────────────────────
@@ -37,6 +39,7 @@ struct AppState {
     planet_explorer_senders: Arc<HashMap<u32, Sender<ExplorerToPlanet>>>,
     explorer_senders: Arc<HashMap<u32, Sender<OrchestratorToExplorer>>>,
     log_tx: broadcast::Sender<LogEntry>,
+    topology: Arc<HashMap<u32, Vec<u32>>>,
 }
 
 // ── API response types ────────────────────────────────────────────────
@@ -249,9 +252,12 @@ async fn start_planet(
     State(state): State<AppState>,
     Path(id): Path<u32>,
 ) -> Json<SimpleStatus> {
-    let planets = state.telemetry.planets.read().unwrap();
-    if let Some(entry) = planets.get(&id) {
-        entry.ai_running.store(true, Ordering::SeqCst);
+    if let Some(tx) = state.planet_senders.get(&id) {
+        let _ = tx.send(OrchestratorToPlanet::StartPlanetAI);
+        let planets = state.telemetry.planets.read().unwrap();
+        if let Some(entry) = planets.get(&id) {
+            entry.ai_running.store(true, Ordering::SeqCst);
+        }
     }
     Json(SimpleStatus { status: "ok".to_string() })
 }
@@ -260,9 +266,12 @@ async fn stop_planet(
     State(state): State<AppState>,
     Path(id): Path<u32>,
 ) -> Json<SimpleStatus> {
-    let planets = state.telemetry.planets.read().unwrap();
-    if let Some(entry) = planets.get(&id) {
-        entry.ai_running.store(false, Ordering::SeqCst);
+    if let Some(tx) = state.planet_senders.get(&id) {
+        let _ = tx.send(OrchestratorToPlanet::StopPlanetAI);
+        let planets = state.telemetry.planets.read().unwrap();
+        if let Some(entry) = planets.get(&id) {
+            entry.ai_running.store(false, Ordering::SeqCst);
+        }
     }
     Json(SimpleStatus { status: "ok".to_string() })
 }
@@ -275,6 +284,68 @@ async fn move_explorer(
         let _ = tx.send(OrchestratorToExplorer::MoveToPlanet { sender_to_new_planet: None, planet_id });
     }
     Json(SimpleStatus { status: "ok".to_string() })
+}
+
+// ── WebSocket log stream ──────────────────────────────────────────────
+
+async fn ws_logs(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_logs_ws(socket, state.log_tx.subscribe()))
+}
+
+async fn handle_logs_ws(mut socket: WebSocket, mut rx: broadcast::Receiver<LogEntry>) {
+    loop {
+        match rx.recv().await {
+            Ok(entry) => {
+                let Ok(json) = serde_json::to_string(&entry) else { continue };
+                if socket.send(Message::Text(json)).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        }
+    }
+}
+
+// ── Explorer list ─────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+#[allow(non_snake_case)]
+struct ExplorerApiEntry {
+    id: u32,
+    currentPlanetId: Option<u32>,
+    basicResources: HashMap<String, u32>,
+    complexResources: HashMap<String, u32>,
+    aiRunning: bool,
+}
+
+async fn list_explorers(State(state): State<AppState>) -> Json<Vec<ExplorerApiEntry>> {
+    let explorers = state.telemetry.explorers.read().unwrap();
+    let positions = state.telemetry.explorer_planet.read().unwrap();
+    let mut result: Vec<ExplorerApiEntry> = explorers
+        .iter()
+        .map(|(id, entry)| {
+            let snap = entry.snapshot();
+            ExplorerApiEntry {
+                id: *id,
+                currentPlanetId: positions.get(id).copied(),
+                basicResources: snap.basic_resources,
+                complexResources: snap.complex_resources,
+                aiRunning: snap.ai_running,
+            }
+        })
+        .collect();
+    result.sort_by_key(|e| e.id);
+    Json(result)
+}
+
+// ── Topology ──────────────────────────────────────────────────────────
+
+async fn get_topology(State(state): State<AppState>) -> Json<HashMap<u32, Vec<u32>>> {
+    Json((*state.topology).clone())
 }
 
 // ── Server ────────────────────────────────────────────────────────────
@@ -298,6 +369,9 @@ async fn run_server(addr: SocketAddr, state: AppState) {
         .route("/api/planets/:id/start", post(start_planet))
         .route("/api/planets/:id/stop", post(stop_planet))
         .route("/api/explorers/:id/move/:planet_id", post(move_explorer))
+        .route("/api/explorers", get(list_explorers))
+        .route("/api/topology", get(get_topology))
+        .route("/ws/logs", get(ws_logs))
         .layer(cors)
         .fallback_service(ServeDir::new("rustyplanet-gui/dist"))
         .with_state(state);
@@ -327,10 +401,34 @@ const PLANET_CONFIGS: &[PlanetConfig] = &[
     PlanetConfig { name: "Orbitron", id: 7, kind: PlanetType::Orbitron, telemetry_kind: PlanetKind::Orbitron },
 ];
 
+fn load_topology(path: &str) -> HashMap<u32, Vec<u32>> {
+    let mut map: HashMap<u32, Vec<u32>> = HashMap::new();
+    let content = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("Warning: could not read {path}: {e}. Using fully-connected fallback.");
+            return map;
+        }
+    };
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.split_whitespace().filter_map(|t| t.parse::<u32>().ok());
+        if let Some(src) = parts.next() {
+            let neighbors: Vec<u32> = parts.collect();
+            map.insert(src, neighbors);
+        }
+    }
+    println!("Loaded galaxy topology: {} planet entries", map.len());
+    map
+}
+
 fn main() {
     println!("Starting RustyPlanets...");
 
-    let _ = BroadcastLogger::init();
+    let log_tx = BroadcastLogger::init().expect("Failed to init logger").0;
     println!("Logger ready");
 
     let telemetry = Arc::new(TelemetryHub::new());
@@ -408,10 +506,9 @@ fn main() {
     let mut explorer_reply_senders: HashMap<u32, Sender<PlanetToExplorer>> = HashMap::new();
 
     // Create explorers
-    for explorer_id in 1..=3 {
+    for explorer_id in 1..=2 {
         let (orch_to_exp_tx, orch_to_exp_rx) = crossbeam_channel::unbounded();
         let (planet_to_exp_tx, planet_to_exp_rx) = crossbeam_channel::unbounded();
-        // Store sender so Orchestrator::initialize() registers it with planet 1 (Bug E)
         explorer_reply_senders.insert(explorer_id, planet_to_exp_tx);
 
         let explorer: Explorer<Bag> = Explorer::new(
@@ -422,6 +519,11 @@ fn main() {
             planet_explorer_senders[&1].clone(),
             planet_to_exp_rx,
         );
+
+        let (bag, ai_running) = explorer.telemetry_handles();
+        telemetry.register_explorer(explorer_id, ExplorerTelemetry { bag, ai_running });
+        telemetry.update_explorer_planet(explorer_id, 1);
+
         println!("Created explorer {}", explorer_id);
         thread::spawn(move || {
             explorer.run();
@@ -430,9 +532,12 @@ fn main() {
     }
 
     println!(
-        "Ready: {} planets, 3 explorers",
+        "Ready: {} planets, 2 explorers",
         PLANET_CONFIGS.len()
     );
+
+    // Load galaxy topology from file; keep an Arc for the API server
+    let topology = Arc::new(load_topology("galaxy.txt"));
 
     // Bug B/C fix: create and run the Orchestrator with all wired channels
     let _stop_handle = Orchestrator::new(
@@ -444,6 +549,7 @@ fn main() {
     )
     .expect("Failed to create orchestrator")
     .with_explorer_reply_senders(explorer_reply_senders)
+    .with_topology((*topology).clone())
     .with_telemetry(telemetry.clone())
     .run();
 
@@ -458,7 +564,8 @@ fn main() {
             planet_senders: Arc::new(planet_senders),
             planet_explorer_senders: Arc::new(planet_explorer_senders),
             explorer_senders: Arc::new(explorer_senders),
-            log_tx: broadcast::channel(1024).0,
+            log_tx,
+            topology,
         };
 
         run_server(addr, state).await;

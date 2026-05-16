@@ -48,6 +48,7 @@ pub struct Orchestrator {
     planet_states: HashMap<u32, PlanetState>,
     explorer_states: HashMap<u32, ExplorerState>,
     explorer_reply_senders: HashMap<u32, Sender<PlanetToExplorer>>,
+    topology: HashMap<u32, Vec<u32>>,
 }
 
 pub struct StopHandle {
@@ -85,6 +86,7 @@ pub fn new(
             planet_states: HashMap::new(),
             explorer_states: HashMap::new(),
             explorer_reply_senders: HashMap::new(),
+            topology: HashMap::new(),
         })
     }
 
@@ -102,6 +104,11 @@ pub fn new(
 
     pub fn with_explorer_reply_senders(mut self, senders: HashMap<u32, Sender<PlanetToExplorer>>) -> Self {
         self.explorer_reply_senders = senders;
+        self
+    }
+
+    pub fn with_topology(mut self, topology: HashMap<u32, Vec<u32>>) -> Self {
+        self.topology = topology;
         self
     }
 
@@ -493,14 +500,19 @@ impl Orchestrator {
     fn handle_explorer_moved(&mut self, explorer_id: u32, planet_id: u32) {
         let old_planet = self.explorer_planet.insert(explorer_id, planet_id);
         log::info!("Explorer {explorer_id} moved to planet {planet_id} (was on {:?})", old_planet);
+        if let Some(ref tel) = self.telemetry {
+            tel.update_explorer_planet(explorer_id, planet_id);
+        }
     }
 
     fn handle_neighbors_request(&self, explorer_id: u32, current_planet_id: u32) {
-        // Get list of all available planet IDs except the current one
-        let neighbors: Vec<u32> = self.planet_senders.keys()
-            .filter(|&&id| id != current_planet_id)
-            .copied()
-            .collect();
+        let neighbors: Vec<u32> = if let Some(adj) = self.topology.get(&current_planet_id) {
+            // Only return topology-defined neighbors that are actually alive
+            adj.iter().copied().filter(|id| self.planet_senders.contains_key(id)).collect()
+        } else {
+            // Fallback: treat all other known planets as neighbors
+            self.planet_senders.keys().filter(|&&id| id != current_planet_id).copied().collect()
+        };
 
         let msg = OrchestratorToExplorer::NeighborsResponse { neighbors };
         let _ = self.send_to_explorer(explorer_id, msg);

@@ -69,6 +69,10 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T>{
         }
     }
 
+    pub fn telemetry_handles(&self) -> (Arc<Mutex<Bag>>, Arc<AtomicBool>) {
+        (Arc::clone(&self.bag), Arc::clone(&self.ai_running))
+    }
+
     pub fn run(mut self){
         // spawn thread
         let _ = thread::spawn(move || {

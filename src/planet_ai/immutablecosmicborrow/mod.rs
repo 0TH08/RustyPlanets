@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use common_game::components::planet::{self, PlanetType};
 use common_game::components::resource::{BasicResourceType, ComplexResourceType};
@@ -6,6 +7,7 @@ use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetTo
 use common_game::protocols::planet_explorer::ExplorerToPlanet;
 use common_game::utils::ID;
 use crossbeam_channel::{Receiver, Sender};
+use crate::planet_telemetry::{SharedPlanetStats, StatsTrackingAI};
 
 mod ai;
 mod frequency_counter;
@@ -58,4 +60,39 @@ pub fn create_planet(
         orchestrator_channels,
         explorers_receiver,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_planet_with_stats(
+    random_mode: bool,
+    basic_gen_coeff: f32,
+    complex_gen_coeff: f32,
+    half_life: Duration,
+    min_time_constant: Duration,
+    id: ID,
+    orchestrator_channels: (Receiver<OrchestratorToPlanet>, Sender<PlanetToOrchestrator>),
+    explorers_receiver: Receiver<ExplorerToPlanet>,
+) -> Result<(planet::Planet, Arc<Mutex<SharedPlanetStats>>), String> {
+    let stats = Arc::new(Mutex::new(SharedPlanetStats::default()));
+    let ai = StatsTrackingAI {
+        inner: Ai::new(random_mode, basic_gen_coeff, complex_gen_coeff, half_life, min_time_constant),
+        stats: Arc::clone(&stats),
+    };
+    let planet = planet::Planet::new(
+        id,
+        PlanetType::C,
+        Box::new(ai),
+        vec![BasicResourceType::Hydrogen],
+        vec![
+            ComplexResourceType::AIPartner,
+            ComplexResourceType::Diamond,
+            ComplexResourceType::Dolphin,
+            ComplexResourceType::Life,
+            ComplexResourceType::Robot,
+            ComplexResourceType::Water,
+        ],
+        orchestrator_channels,
+        explorers_receiver,
+    )?;
+    Ok((planet, stats))
 }

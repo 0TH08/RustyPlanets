@@ -7,6 +7,8 @@ use common_game::components::rocket::Rocket;
 use common_game::components::sunray::Sunray;
 use crossbeam_channel::{Sender, Receiver};
 use common_game::utils::ID;
+use std::sync::{Arc, Mutex};
+use crate::planet_telemetry::{SharedPlanetStats, StatsTrackingAI};
 
 struct RustEzeAI {}
 
@@ -112,10 +114,35 @@ pub fn create_planet(
             BasicResourceType::Carbon,
             BasicResourceType::Hydrogen,
             BasicResourceType::Oxygen,
-            BasicResourceType::Silicon
+            BasicResourceType::Silicon,
         ],
         vec![],
         (r_orchestrator, s_orchestrator),
-        r_explorer
+        r_explorer,
     )
+}
+
+pub fn create_planet_with_stats(
+    id: ID,
+    r_orchestrator: Receiver<OrchestratorToPlanet>,
+    s_orchestrator: Sender<PlanetToOrchestrator>,
+    r_explorer: Receiver<ExplorerToPlanet>,
+) -> Result<(Planet, Arc<Mutex<SharedPlanetStats>>), String> {
+    let stats = Arc::new(Mutex::new(SharedPlanetStats::default()));
+    let ai = StatsTrackingAI { inner: RustEzeAI::new(), stats: Arc::clone(&stats) };
+    let planet = Planet::new(
+        id,
+        PlanetType::D,
+        Box::new(ai),
+        vec![
+            BasicResourceType::Carbon,
+            BasicResourceType::Hydrogen,
+            BasicResourceType::Oxygen,
+            BasicResourceType::Silicon,
+        ],
+        vec![],
+        (r_orchestrator, s_orchestrator),
+        r_explorer,
+    )?;
+    Ok((planet, stats))
 }

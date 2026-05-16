@@ -15,6 +15,7 @@ import {
   styled,
 } from "@mui/material";
 
+import { ExplorersPage } from "./ExplorersPage";
 import { LogsPage } from "./LogsPage";
 import { OverviewPage } from "./OverviewPage";
 import { PlanetPage } from "./PlanetPage";
@@ -28,7 +29,8 @@ type TabKey =
   | "planet"
   | "simulation"
   | "logs"
-  | "visualization";
+  | "visualization"
+  | "explorers";
 
 const TAB_ORDER: TabKey[] = [
   "overview",
@@ -36,6 +38,7 @@ const TAB_ORDER: TabKey[] = [
   "simulation",
   "logs",
   "visualization",
+  "explorers",
 ];
 
 const StyledAppBar = styled(AppBar)({
@@ -104,6 +107,8 @@ export function RootLayout() {
         return <LogsPage mode={mode} />;
       case "visualization":
         return <VisualizationPage mode={mode} />;
+      case "explorers":
+        return <ExplorersPage mode={mode} />;
       default:
         return null;
     }

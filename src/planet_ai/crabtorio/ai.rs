@@ -176,6 +176,8 @@ impl PlanetAI for AI {
 use common_game::components::planet::Planet;
 use common_game::components::planet::PlanetType;
 use crossbeam_channel::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use crate::planet_telemetry::{SharedPlanetStats, StatsTrackingAI};
 
 pub fn create_planet(
     id: ID,
@@ -191,4 +193,23 @@ pub fn create_planet(
         orchestrator_channels,
         explorers_receiver,
     )
+}
+
+pub fn create_planet_with_stats(
+    id: ID,
+    orchestrator_channels: (Receiver<OrchestratorToPlanet>, Sender<PlanetToOrchestrator>),
+    explorers_receiver: Receiver<ExplorerToPlanet>,
+) -> Result<(Planet, Arc<Mutex<SharedPlanetStats>>), String> {
+    let stats = Arc::new(Mutex::new(SharedPlanetStats::default()));
+    let ai = StatsTrackingAI { inner: AI, stats: Arc::clone(&stats) };
+    let planet = Planet::new(
+        id,
+        PlanetType::B,
+        Box::new(ai),
+        vec![BasicResourceType::Hydrogen],
+        vec![ComplexResourceType::Water],
+        orchestrator_channels,
+        explorers_receiver,
+    )?;
+    Ok((planet, stats))
 }

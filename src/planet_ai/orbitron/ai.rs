@@ -466,6 +466,8 @@ impl PlanetAI for Orbitron {
 use common_game::components::planet::{Planet, PlanetType};
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
 use crossbeam_channel::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use crate::planet_telemetry::{SharedPlanetStats, StatsTrackingAI};
 
 /// Creates and initializes a new Orbitron planet.
 ///
@@ -487,4 +489,24 @@ pub fn create_planet(
         (rx_orchestrator, tx_orchestrator),
         rx_explorer,
     )
+}
+
+pub fn create_planet_with_stats(
+    id: ID,
+    rx_orchestrator: Receiver<OrchestratorToPlanet>,
+    tx_orchestrator: Sender<PlanetToOrchestrator>,
+    rx_explorer: Receiver<ExplorerToPlanet>,
+) -> Result<(Planet, Arc<Mutex<SharedPlanetStats>>), String> {
+    let stats = Arc::new(Mutex::new(SharedPlanetStats::default()));
+    let ai = StatsTrackingAI { inner: Orbitron::new(id), stats: Arc::clone(&stats) };
+    let planet = Planet::new(
+        id,
+        PlanetType::A,
+        Box::new(ai),
+        vec![BasicResourceType::Hydrogen],
+        vec![],
+        (rx_orchestrator, tx_orchestrator),
+        rx_explorer,
+    )?;
+    Ok((planet, stats))
 }
