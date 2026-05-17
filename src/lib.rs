@@ -8,6 +8,8 @@ pub mod explorer;
 pub mod telemetry;
 pub mod planet_telemetry;
 pub mod broadcast_log;
+#[cfg(test)]
+mod tests;
 
 pub use common_game;
 

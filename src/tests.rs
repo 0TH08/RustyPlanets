@@ -7,6 +7,7 @@ mod tests {
 
     use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
     use common_game::protocols::planet_explorer::ExplorerToPlanet;
+    use crate::PlanetType;
 
     #[test]
     fn skycartel_create_planet_smoke() {
@@ -14,7 +15,7 @@ mod tests {
         let (tx_planet, _rx_planet) = unbounded::<PlanetToOrchestrator>();
         let (_tx_expl, rx_expl) = unbounded::<ExplorerToPlanet>();
 
-        let planet = crate::create_planet(42, rx_orch, tx_planet, rx_expl);
+        let planet = crate::create_planet(42, PlanetType::Skycartel, rx_orch, tx_planet, rx_expl);
         assert!(planet.is_ok());
     }
 }

@@ -12,7 +12,7 @@ import {
   styled,
 } from "@mui/material";
 
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useLogStore } from "../store/logStore";
 
 type Mode = "player" | "debug";
@@ -97,6 +97,24 @@ export function LogsPage({ mode }: LogsPageProps) {
   }, [logs, levelFilter]);
 
   const streamLabel = isStreaming ? "STREAMING" : "PAUSED";
+
+  const downloadLogs = useCallback(() => {
+    const lines = logs.map((log) => {
+      const time = new Date(log.timestamp).toLocaleTimeString();
+      const planet = log.planetId != null ? ` [planet ${log.planetId}]` : "";
+      return `[${time}] [${log.level.toUpperCase().padEnd(5)}]${planet} ${log.message}`;
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rustyplanets-logs-${new Date()
+      .toISOString()
+      .slice(0, 19)
+      .replace(/:/g, "-")}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [logs]);
 
   return (
     <StyledCard sx={{ height: "100%" }}>
@@ -245,6 +263,31 @@ export function LogsPage({ mode }: LogsPageProps) {
               {isStreaming
                 ? "Pause Stream"
                 : "Start Stream"}
+            </Button>
+
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={downloadLogs}
+              disabled={logs.length === 0}
+              sx={{
+                borderColor: "rgba(99,102,241,0.35)",
+                color: "#818cf8",
+                borderRadius: "10px",
+                textTransform: "none",
+                fontWeight: 600,
+                boxShadow: "none",
+                "&:hover": {
+                  borderColor: "rgba(99,102,241,0.6)",
+                  background: "rgba(99,102,241,0.08)",
+                },
+                "&.Mui-disabled": {
+                  borderColor: "rgba(255,255,255,0.1)",
+                  color: "rgba(255,255,255,0.2)",
+                },
+              }}
+            >
+              Download Logs ({logs.length})
             </Button>
 
             {mode !== "debug" && (

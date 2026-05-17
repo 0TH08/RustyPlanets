@@ -21,7 +21,7 @@ use skycartel::broadcast_log::{BroadcastLogger, LogEntry};
 use skycartel::common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
 use skycartel::common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
 use skycartel::common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
-use skycartel::orchestrator::Orchestrator;
+use skycartel::orchestrator::{GuiCommand, Orchestrator};
 use skycartel::create_planet;
 use skycartel::create_planet_with_telemetry;
 use skycartel::explorer::{Bag, Explorer};
@@ -32,12 +32,9 @@ use skycartel::PlanetType;
 // ── App state ─────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-#[allow(dead_code)]
 struct AppState {
     telemetry: Arc<TelemetryHub>,
-    planet_senders: Arc<HashMap<u32, Sender<OrchestratorToPlanet>>>,
-    planet_explorer_senders: Arc<HashMap<u32, Sender<ExplorerToPlanet>>>,
-    explorer_senders: Arc<HashMap<u32, Sender<OrchestratorToExplorer>>>,
+    gui_tx: Sender<GuiCommand>,
     log_tx: broadcast::Sender<LogEntry>,
     topology: Arc<HashMap<u32, Vec<u32>>>,
 }
@@ -164,17 +161,12 @@ async fn reset_simulation(State(state): State<AppState>) -> Json<StatusResponse>
 }
 
 async fn send_sunray(State(state): State<AppState>, Path(id): Path<u32>) -> Json<SimpleStatus> {
-    if let Some(tx) = state.planet_senders.get(&id) {
-        // Sunray messages go to the planet's orchestrator channel
-        let _ = tx.send(OrchestratorToPlanet::Sunray(Default::default()));
-    }
+    let _ = state.gui_tx.send(GuiCommand::SendSunray { planet_id: id });
     Json(SimpleStatus { status: "ok".to_string() })
 }
 
 async fn send_asteroid(State(state): State<AppState>, Path(id): Path<u32>) -> Json<SimpleStatus> {
-    if let Some(tx) = state.planet_senders.get(&id) {
-        let _ = tx.send(OrchestratorToPlanet::Asteroid(Default::default()));
-    }
+    let _ = state.gui_tx.send(GuiCommand::SendAsteroid { planet_id: id });
     Json(SimpleStatus { status: "ok".to_string() })
 }
 
@@ -252,13 +244,7 @@ async fn start_planet(
     State(state): State<AppState>,
     Path(id): Path<u32>,
 ) -> Json<SimpleStatus> {
-    if let Some(tx) = state.planet_senders.get(&id) {
-        let _ = tx.send(OrchestratorToPlanet::StartPlanetAI);
-        let planets = state.telemetry.planets.read().unwrap();
-        if let Some(entry) = planets.get(&id) {
-            entry.ai_running.store(true, Ordering::SeqCst);
-        }
-    }
+    let _ = state.gui_tx.send(GuiCommand::StartPlanet { planet_id: id });
     Json(SimpleStatus { status: "ok".to_string() })
 }
 
@@ -266,13 +252,7 @@ async fn stop_planet(
     State(state): State<AppState>,
     Path(id): Path<u32>,
 ) -> Json<SimpleStatus> {
-    if let Some(tx) = state.planet_senders.get(&id) {
-        let _ = tx.send(OrchestratorToPlanet::StopPlanetAI);
-        let planets = state.telemetry.planets.read().unwrap();
-        if let Some(entry) = planets.get(&id) {
-            entry.ai_running.store(false, Ordering::SeqCst);
-        }
-    }
+    let _ = state.gui_tx.send(GuiCommand::StopPlanet { planet_id: id });
     Json(SimpleStatus { status: "ok".to_string() })
 }
 
@@ -280,9 +260,7 @@ async fn move_explorer(
     State(state): State<AppState>,
     Path((explorer_id, planet_id)): Path<(u32, u32)>,
 ) -> Json<SimpleStatus> {
-    if let Some(tx) = state.explorer_senders.get(&explorer_id) {
-        let _ = tx.send(OrchestratorToExplorer::MoveToPlanet { sender_to_new_planet: None, planet_id });
-    }
+    let _ = state.gui_tx.send(GuiCommand::MoveExplorer { explorer_id, dst_planet_id: planet_id });
     Json(SimpleStatus { status: "ok".to_string() })
 }
 
@@ -539,8 +517,10 @@ fn main() {
     // Load galaxy topology from file; keep an Arc for the API server
     let topology = Arc::new(load_topology("galaxy.txt"));
 
-    // Bug B/C fix: create and run the Orchestrator with all wired channels
-    let _stop_handle = Orchestrator::new(
+    // Bug B/C fix: create and run the Orchestrator with all wired channels.
+    // All GUI-triggered actions (sunray, asteroid, start/stop planet, move explorer)
+    // go through gui_tx so the Orchestrator remains the single coordinator.
+    let stop_handle = Orchestrator::new(
         planet_senders.clone(),
         planet_explorer_senders.clone(),
         planet_to_orch_rx,
@@ -552,6 +532,7 @@ fn main() {
     .with_topology((*topology).clone())
     .with_telemetry(telemetry.clone())
     .run();
+    let gui_tx = stop_handle.gui_tx.clone();
 
     // Start GUI server
     let rt = Builder::new_multi_thread().enable_all().build().unwrap();
@@ -561,9 +542,7 @@ fn main() {
 
         let state = AppState {
             telemetry,
-            planet_senders: Arc::new(planet_senders),
-            planet_explorer_senders: Arc::new(planet_explorer_senders),
-            explorer_senders: Arc::new(explorer_senders),
+            gui_tx,
             log_tx,
             topology,
         };

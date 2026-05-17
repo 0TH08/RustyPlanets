@@ -42,7 +42,7 @@ export const useLogStore = create<LogState>((set) => ({
           source: raw.target,
           message: raw.message,
         }
-        set((state) => ({ logs: [...state.logs.slice(-199), entry] }))
+        set((state) => ({ logs: [...state.logs.slice(-4999), entry] }))
       } catch {
         // ignore malformed frames
       }

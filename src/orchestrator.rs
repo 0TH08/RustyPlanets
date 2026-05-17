@@ -13,6 +13,16 @@ use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer
 use crate::explorer::Bag;
 use crate::telemetry::TelemetryHub;
 
+/// Commands the GUI server sends to the Orchestrator instead of writing
+/// directly to planet/explorer channels.
+pub enum GuiCommand {
+    SendSunray { planet_id: u32 },
+    SendAsteroid { planet_id: u32 },
+    StartPlanet { planet_id: u32 },
+    StopPlanet { planet_id: u32 },
+    MoveExplorer { explorer_id: u32, dst_planet_id: u32 },
+}
+
 /// Validates planet message sequence protocol.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PlanetState {
@@ -40,6 +50,7 @@ pub struct Orchestrator {
     forge: Option<Forge>,
     running: Arc<AtomicBool>,
     step_rx: Option<Receiver<()>>,
+    gui_rx: Option<Receiver<GuiCommand>>,
     telemetry: Option<Arc<TelemetryHub>>,
     tick: Arc<AtomicU64>,
     explorer_planet: HashMap<u32, u32>,
@@ -54,6 +65,7 @@ pub struct Orchestrator {
 pub struct StopHandle {
     running: Arc<AtomicBool>,
     tick: Arc<AtomicU64>,
+    pub gui_tx: Sender<GuiCommand>,
 }
 
 // ── Core ──────────────────────────────────────────────────────────────────────
@@ -78,6 +90,7 @@ pub fn new(
             forge: None,
             running,
             step_rx: None,
+            gui_rx: None,
             telemetry: None,
             tick: Arc::new(AtomicU64::new(0)),
             explorer_planet: HashMap::new(),
@@ -99,6 +112,11 @@ pub fn new(
 
     pub fn with_step_channel(mut self, step_rx: Receiver<()>) -> Self {
         self.step_rx = Some(step_rx);
+        self
+    }
+
+    pub fn with_gui_channel(mut self, gui_rx: Receiver<GuiCommand>) -> Self {
+        self.gui_rx = Some(gui_rx);
         self
     }
 
@@ -142,8 +160,13 @@ pub fn new(
         let running = Arc::clone(&self.running);
         let running_thread = Arc::clone(&running);
         let step_rx = self.step_rx.take();
+        let gui_rx = self.gui_rx.take();
         let telemetry = self.telemetry.take();
         let tick_arc = Arc::clone(&self.tick);
+
+        let (gui_tx, gui_rx_owned) = crossbeam_channel::unbounded::<GuiCommand>();
+        // If a gui_rx was provided via with_gui_channel, use it; otherwise use the new one.
+        let gui_rx_final = gui_rx.unwrap_or(gui_rx_owned);
 
         std::thread::spawn(move || {
             eprintln!("[orchestrator thread] starting loop");
@@ -169,12 +192,55 @@ pub fn new(
                     }
                 }
 
-                // send sunray to each planet
-                // (deferred to planets - they generate their own energy)
-                // let planet_ids: Vec<u32> = self.planet_senders.keys().cloned().collect();
-                // for planet_id in planet_ids {
-                //     let _ = self.send_sunray(planet_id);
-                // }
+                // Drain GUI commands before processing planet/explorer responses.
+                while let Ok(cmd) = gui_rx_final.try_recv() {
+                    match cmd {
+                        GuiCommand::SendSunray { planet_id } => {
+                            if let Err(e) = self.send_sunray(planet_id) {
+                                log::warn!("GUI sunray to planet {planet_id} failed: {e}");
+                            }
+                        }
+                        GuiCommand::SendAsteroid { planet_id } => {
+                            if let Err(e) = self.send_asteroid(planet_id) {
+                                log::warn!("GUI asteroid to planet {planet_id} failed: {e}");
+                            }
+                        }
+                        GuiCommand::StartPlanet { planet_id } => {
+                            if let Err(e) = self.start_planet(planet_id) {
+                                log::warn!("GUI start planet {planet_id} failed: {e}");
+                            } else if let Some(ref tel) = telemetry {
+                                if let Some(entry) = tel.planets.read().unwrap().get(&planet_id) {
+                                    entry.ai_running.store(true, std::sync::atomic::Ordering::SeqCst);
+                                }
+                            }
+                        }
+                        GuiCommand::StopPlanet { planet_id } => {
+                            if let Err(e) = self.stop_planet(planet_id) {
+                                log::warn!("GUI stop planet {planet_id} failed: {e}");
+                            } else if let Some(ref tel) = telemetry {
+                                if let Some(entry) = tel.planets.read().unwrap().get(&planet_id) {
+                                    entry.ai_running.store(false, std::sync::atomic::Ordering::SeqCst);
+                                }
+                            }
+                        }
+                        GuiCommand::MoveExplorer { explorer_id, dst_planet_id } => {
+                            let current = self.explorer_planet.get(&explorer_id).copied().unwrap_or(0);
+                            self.handle_travel_request(explorer_id, current, dst_planet_id);
+                        }
+                    }
+                }
+
+                // Send a sunray to every alive planet each tick so they can charge
+                // cells and respond to explorer resource requests.
+                let alive_planet_ids: Vec<u32> = self.planet_alive
+                    .iter()
+                    .filter_map(|(&id, &alive)| if alive { Some(id) } else { None })
+                    .collect();
+                for planet_id in alive_planet_ids {
+                    if let Err(e) = self.send_sunray(planet_id) {
+                        log::warn!("Failed to send sunray to planet {planet_id}: {e}");
+                    }
+                }
 
                 // maybe send asteroid (~5% chance per tick)
                 // (deferred - asteroids would need coordination)
@@ -209,7 +275,7 @@ pub fn new(
             }
         });
 
-        StopHandle { running, tick: tick_arc }
+        StopHandle { running, tick: tick_arc, gui_tx }
     }
 }
 
@@ -316,15 +382,16 @@ impl Orchestrator {
         log::debug!("Planet {planet_id} acknowledged sunray");
     }
 
-    fn handle_asteroid_ack(&self, planet_id : u32, rocket: Option<Rocket>) {
+    fn handle_asteroid_ack(&mut self, planet_id : u32, rocket: Option<Rocket>) {
         match rocket {
             Some(_rocket) => {
-                // planet deflected the asteroid
                 log::info!("Planet {planet_id} deflected the asteroid");
             }
             None => {
-                // asteroid hit — planet took damage
-                log::warn!("Planet {planet_id} was hit by an asteroid!");
+                log::warn!("Planet {planet_id} was hit by an asteroid and is being destroyed");
+                if let Err(e) = self.kill_planet(planet_id) {
+                    log::error!("Failed to kill planet {planet_id}: {e}");
+                }
             }
         }
     }
@@ -688,6 +755,15 @@ impl Orchestrator {
             self.planet_alive.insert(planet_id, true);
             self.planet_states.insert(planet_id, PlanetState::Starting);
             self.start_planet(planet_id)?;
+        }
+
+        // Pre-charge all planet cells before starting explorers so the first
+        // explorer visit has energy available without waiting for the first tick.
+        let planet_ids_for_charge: Vec<u32> = self.planet_senders.keys().copied().collect();
+        for planet_id in &planet_ids_for_charge {
+            for _ in 0..5 {
+                let _ = self.send_sunray(*planet_id);
+            }
         }
 
         // mark all explorers as alive and register their reply channels with planet 1
