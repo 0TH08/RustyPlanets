@@ -1,6 +1,6 @@
 import type { } from './simulation'
 
-export type PlanetKind = 'skycartel' | 'luna4' | 'blackadidasshoe' | 'immutablecosmicborrow' | 'rusteze' | 'crabtorio' | 'orbitron'
+export type PlanetKind = 'skycartel' | 'luna4' | 'blackadidasshoe' | 'immutablecosmicborrow' | 'rusteze' | 'crabtorio' | 'orbitron' | 'astroparrot'
 
 export interface CellState {
   index: number

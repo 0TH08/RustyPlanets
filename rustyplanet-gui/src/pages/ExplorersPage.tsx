@@ -33,6 +33,7 @@ const PLANET_NAMES: Record<number, string> = {
   5: "RustEze",
   6: "Crabtorio",
   7: "Orbitron",
+  8: "AstroParrot",
 };
 
 const StyledCard = styled(Card)({

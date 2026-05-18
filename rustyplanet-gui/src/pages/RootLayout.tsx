@@ -217,7 +217,7 @@ export function RootLayout() {
       </StyledAppBar>
 
       {/* CONTENT */}
-      <Container maxWidth="xl" sx={{ flexGrow: 1, py: 4, px: { xs: 2, md: 4 } }}>
+      <Container maxWidth={false} sx={{ flexGrow: 1, py: 4, px: { xs: 2, md: 4 } }}>
         {renderTabContent()}
       </Container>
     </Box>

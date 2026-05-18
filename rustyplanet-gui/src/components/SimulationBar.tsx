@@ -1,6 +1,6 @@
 import { Box, keyframes, Typography } from "@mui/material";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { usePlanetStore } from "../store/planetStore";
 import { useSimulationStore } from "../store/simulationStore";
@@ -28,13 +28,10 @@ const SimBar = styled(Box)({
   marginTop: "24px",
 });
 
-var stateColor = "";
-
-var PulseDot = styled(Box)({
+const PulseDot = styled(Box)({
   width: "10px",
   height: "10px",
   borderRadius: "50%",
-  background: "#10b981",
   animation: `${pulse} 2s ease-in-out infinite`,
 });
 
@@ -54,14 +51,15 @@ const SimTitles = {
 export function SimulationBar() {
   const { planets } = usePlanetStore();
   const { runState, tick, speed } = useSimulationStore();
+  const [stateColor, setStateColor] = useState("#10b981");
 
   useEffect(() => {
-    if (runState == "running") {
-      stateColor = "#10b981";
-    } else if (runState == "paused") {
-      stateColor = "#fff";
+    if (runState === "running") {
+      setStateColor("#10b981");
+    } else if (runState === "paused") {
+      setStateColor("#ffffff");
     } else {
-      stateColor = "error";
+      setStateColor("#ef4444");
     }
   }, [runState]);
 
@@ -86,7 +84,7 @@ export function SimulationBar() {
       </Box>
 
       <Box display="flex" alignItems="center" gap={2}>
-        <PulseDot />
+        <PulseDot sx={{ background: stateColor }} />
         <Box>
           <Typography sx={SimTitles}>State</Typography>
           <Typography

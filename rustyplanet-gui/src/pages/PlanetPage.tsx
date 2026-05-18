@@ -1,15 +1,17 @@
 import {
+  Alert,
   Box,
   Button,
   Chip,
   CircularProgress,
+  Snackbar,
   Stack,
   Typography,
   Card,
   styled,
 } from "@mui/material";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { EnergyCellsView } from "../components/EnergyCellsView";
 import { usePlanetStore } from "../store/planetStore";
 import {
@@ -95,6 +97,7 @@ const BTN = {
 
 export function PlanetPage({}: PlanetPageProps) {
   const {
+    planets,
     selectedPlanet,
     selectedPlanetId,
     isLoadingDetails,
@@ -104,16 +107,29 @@ export function PlanetPage({}: PlanetPageProps) {
 
   const p = selectedPlanet;
 
+  const [toast, setToast] = useState<{ msg: string; severity: "success" | "error" } | null>(null);
+
+  const showToast = (msg: string, severity: "success" | "error" = "success") =>
+    setToast({ msg, severity });
+
   useEffect(() => {
     void loadPlanets();
     const id = setInterval(() => void loadPlanets(), 1500);
     return () => clearInterval(id);
   }, [loadPlanets]);
 
-  const runIfPlanet = async (fn: (id: number) => Promise<any>) => {
+  const runIfPlanet = async (
+    fn: (id: number) => Promise<any>,
+    successMsg: string
+  ) => {
     if (!selectedPlanetId) return;
-    await fn(selectedPlanetId);
-    await selectPlanet(selectedPlanetId);
+    try {
+      await fn(selectedPlanetId);
+      await selectPlanet(selectedPlanetId);
+      showToast(successMsg, "success");
+    } catch {
+      showToast("Action failed — is the backend running?", "error");
+    }
   };
 
   const stats = p && [
@@ -131,6 +147,42 @@ export function PlanetPage({}: PlanetPageProps) {
       {/* Planet Details */}
       <StyledCard>
         {SECTION_TITLE("Planet Details")}
+
+        {/* Planet selector */}
+        {planets.length > 0 && (
+          <Stack direction="row" spacing={1} flexWrap="wrap" mb={2}>
+            {planets.map((planet) => (
+              <Chip
+                key={planet.id}
+                label={planet.name}
+                size="small"
+                onClick={() => selectPlanet(planet.id)}
+                variant={selectedPlanetId === planet.id ? "filled" : "outlined"}
+                sx={{
+                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  ...(selectedPlanetId === planet.id
+                    ? {
+                        background: "rgba(99,102,241,0.25)",
+                        color: "#a5b4fc",
+                        border: "1px solid rgba(99,102,241,0.5)",
+                      }
+                    : {
+                        background: "transparent",
+                        color: "#6b7280",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        "&:hover": {
+                          background: "rgba(255,255,255,0.04)",
+                          color: "#d1d5db",
+                          border: "1px solid rgba(255,255,255,0.2)",
+                        },
+                      }),
+                }}
+              />
+            ))}
+          </Stack>
+        )}
 
         <Box display="flex" justifyContent="space-between" mb={2}>
           {p && (
@@ -205,7 +257,7 @@ export function PlanetPage({}: PlanetPageProps) {
             <Stack direction="row" spacing={1} flexWrap="wrap">
               <Button
                 variant="contained"
-                onClick={() => runIfPlanet(startPlanet)}
+                onClick={() => runIfPlanet(startPlanet, "AI started")}
                 sx={{
                   ...BTN.base,
                   background: BTN.start.bg,
@@ -218,7 +270,7 @@ export function PlanetPage({}: PlanetPageProps) {
 
               <Button
                 variant="outlined"
-                onClick={() => runIfPlanet(stopPlanet)}
+                onClick={() => runIfPlanet(stopPlanet, "AI stopped")}
                 sx={{
                   ...BTN.base,
                   borderColor: BTN.stop.border,
@@ -234,7 +286,7 @@ export function PlanetPage({}: PlanetPageProps) {
 
               <Button
                 variant="outlined"
-                onClick={() => runIfPlanet(sendSunray)}
+                onClick={() => runIfPlanet(sendSunray, "☀️ Sunray sent!")}
                 sx={{
                   ...BTN.base,
                   borderColor: BTN.sunray.border,
@@ -250,7 +302,7 @@ export function PlanetPage({}: PlanetPageProps) {
 
               <Button
                 variant="outlined"
-                onClick={() => runIfPlanet(sendAsteroid)}
+                onClick={() => runIfPlanet(sendAsteroid, "☄️ Asteroid launched!")}
                 sx={{
                   ...BTN.base,
                   borderColor: BTN.asteroid.border,
@@ -352,6 +404,23 @@ export function PlanetPage({}: PlanetPageProps) {
           </Typography>
         )}
       </StyledCard>
+
+      {/* Toast */}
+      <Snackbar
+        open={toast !== null}
+        autoHideDuration={3000}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setToast(null)}
+          severity={toast?.severity ?? "success"}
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {toast?.msg}
+        </Alert>
+      </Snackbar>
     </Stack>
   );
 }

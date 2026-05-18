@@ -1,8 +1,10 @@
 import {
+  Alert,
   Box,
   Button,
   Chip,
   Slider,
+  Snackbar,
   Stack,
   Typography,
   Card,
@@ -138,19 +140,26 @@ export function SimulationPage({ mode }: SimulationPageProps) {
   } = useSimulationStore();
 
   const [localSpeed, setLocalSpeed] = useState(speed);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => {
-      setBusy(true);
+    const load = async () => {
       try {
         const status = await getSimulationStatus();
         setRunState(status.runState);
         setSpeed(status.speed);
-      } finally {
-        setBusy(false);
+        setTick(status.tick);
+      } catch {
+        // backend not ready yet, keep existing state
       }
-    })();
-  }, [setBusy, setRunState, setSpeed]);
+    };
+
+    setBusy(true);
+    load().finally(() => setBusy(false));
+
+    const id = window.setInterval(load, 1000);
+    return () => window.clearInterval(id);
+  }, [setBusy, setRunState, setSpeed, setTick]);
 
   const withBusy = async (fn: () => Promise<any>) => {
     setBusy(true);
@@ -166,18 +175,21 @@ export function SimulationPage({ mode }: SimulationPageProps) {
       withBusy(async () => {
         const s = await setSimulationRunState("running");
         setRunState(s.runState);
+        setToast("▶ Simulation running");
       }),
 
     pause: () =>
       withBusy(async () => {
         const s = await setSimulationRunState("paused");
         setRunState(s.runState);
+        setToast("⏸ Simulation paused");
       }),
 
     step: () =>
       withBusy(async () => {
         const s = await stepSimulation();
         setRunState(s.runState);
+        setToast("⏭ Stepped one tick");
       }),
 
     reset: () =>
@@ -186,6 +198,7 @@ export function SimulationPage({ mode }: SimulationPageProps) {
         setRunState(s.runState);
         setSpeed(s.speed);
         setTick(0);
+        setToast("🔄 Simulation reset");
       }),
 
     idle: () =>
@@ -193,6 +206,7 @@ export function SimulationPage({ mode }: SimulationPageProps) {
         const s = await setSimulationRunState("idle");
         setRunState(s.runState);
         setTick(0);
+        setToast("⏹ Simulation stopped");
       }),
   };
 
@@ -348,6 +362,22 @@ export function SimulationPage({ mode }: SimulationPageProps) {
           </Box>
         )}
       </Stack>
+
+      <Snackbar
+        open={toast !== null}
+        autoHideDuration={2500}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setToast(null)}
+          severity="success"
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {toast}
+        </Alert>
+      </Snackbar>
     </StyledCard>
   );
 }

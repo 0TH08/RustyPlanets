@@ -24,6 +24,11 @@ interface OrbitParams {
   color: string;
 }
 
+interface ExplorerPos {
+  id: number;
+  currentPlanetId: number | null;
+}
+
 // Fixed visual params per planet id — kept stable so the animation doesn't jump on refetch
 const PLANET_VISUAL: Record<number, OrbitParams> = {
   1: { radius: 40,  speed: 0.5,  color: "#90caf9" },
@@ -33,6 +38,7 @@ const PLANET_VISUAL: Record<number, OrbitParams> = {
   5: { radius: 65,  speed: 0.6,  color: "#ffcc02" },
   6: { radius: 50,  speed: 0.7,  color: "#ef5350" },
   7: { radius: 75,  speed: 0.35, color: "#26c6da" },
+  8: { radius: 95,  speed: 0.15, color: "#f472b6" },
 };
 
 const StyledCard = styled(Card)({
@@ -59,6 +65,7 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
   const [time, setTime] = useState(0);
   const [planets, setPlanets] = useState<PlanetSummary[]>([]);
   const [topology, setTopology] = useState<Record<string, number[]>>({});
+  const [explorers, setExplorers] = useState<ExplorerPos[]>([]);
   const startRef = useRef<number | null>(null);
 
   // Animation loop
@@ -91,6 +98,18 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
       .then((r) => r.json())
       .then(setTopology)
       .catch(() => {});
+  }, []);
+
+  // Poll explorer positions every 3 s
+  useEffect(() => {
+    const load = () =>
+      fetch(`${API_BASE}/explorers`)
+        .then((r) => r.json())
+        .then((data: ExplorerPos[]) => setExplorers(data))
+        .catch(() => {});
+    load();
+    const id = window.setInterval(load, 3000);
+    return () => window.clearInterval(id);
   }, []);
 
   const size = 340;
@@ -244,6 +263,36 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
                 </g>
               );
             })}
+
+            {/* Explorer spacecraft */}
+            {explorers.map((e, i) => {
+              if (!e.currentPlanetId) return null;
+              const pos = positions[e.currentPlanetId];
+              if (!pos) return null;
+              // Offset each explorer slightly so they don't stack
+              const angle = (i * Math.PI * 0.75);
+              const ex = pos.x + Math.cos(angle) * 13;
+              const ey = pos.y + Math.sin(angle) * 13;
+              return (
+                <g key={`explorer-${e.id}`}>
+                  {/* Diamond spacecraft icon */}
+                  <polygon
+                    points={`${ex},${ey - 5} ${ex + 4},${ey} ${ex},${ey + 5} ${ex - 4},${ey}`}
+                    fill="#f59e0b"
+                    opacity={0.95}
+                  />
+                  <text
+                    x={ex + 7}
+                    y={ey + 3}
+                    fill="#fbbf24"
+                    fontSize="7"
+                    style={{ pointerEvents: "none" }}
+                  >
+                    E{e.id}
+                  </text>
+                </g>
+              );
+            })}
           </svg>
         </Box>
 
@@ -320,6 +369,34 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
               })}
             </Stack>
           </Box>
+
+          {/* Explorer legend */}
+          {explorers.length > 0 && (
+            <Box
+              sx={{
+                p: 2,
+                borderRadius: "12px",
+                background: "rgba(245,158,11,0.04)",
+                border: "1px solid rgba(245,158,11,0.2)",
+              }}
+            >
+              <Typography
+                sx={{ fontSize: "12px", color: "#fbbf24", fontWeight: 600, mb: 0.5 }}
+              >
+                🛸 Explorers ({explorers.length})
+              </Typography>
+              <Stack spacing={0.5}>
+                {explorers.map((e) => {
+                  const pName = planets.find((p) => p.id === e.currentPlanetId)?.name ?? "Unknown";
+                  return (
+                    <Typography key={e.id} sx={{ fontSize: "11px", color: "#9ca3af" }}>
+                      E{e.id} → {pName}
+                    </Typography>
+                  );
+                })}
+              </Stack>
+            </Box>
+          )}
 
           {/* Topology info */}
           {Object.keys(topology).length > 0 && (
