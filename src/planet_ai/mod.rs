@@ -1,7 +1,6 @@
 //! Planet module root for the RustyPlanets crate.
 
 pub mod cycle;
-pub mod energy;
 pub mod errors;
 pub mod resources;
 pub mod state;
