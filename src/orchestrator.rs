@@ -159,7 +159,6 @@ pub fn new(
 
         let running = Arc::clone(&self.running);
         let running_thread = Arc::clone(&running);
-        let step_rx = self.step_rx.take();
         let gui_rx = self.gui_rx.take();
         let telemetry = self.telemetry.take();
         let tick_arc = Arc::clone(&self.tick);
@@ -173,24 +172,11 @@ pub fn new(
             // Set running flag to true to start the simulation
             running_thread.store(true, std::sync::atomic::Ordering::SeqCst);
 
-            while running_thread.load(std::sync::atomic::Ordering::SeqCst) {
-                eprintln!("[orchestrator thread] tick");
-                // if a step channel exists and we're paused, block until a step arrives
-                if let Some(ref rx) = step_rx {
-                    while !running_thread.load(std::sync::atomic::Ordering::SeqCst) {
-                        match rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                            Ok(()) => {
-                                // execute exactly one tick, then return to paused
-                                break;
-                            }
-                            Err(_) => continue,
-                        }
-                    }
-                    // re-check: if still paused after step (e.g. stop was called), exit
-                    if !running_thread.load(std::sync::atomic::Ordering::SeqCst) {
-                        break;
-                    }
+            loop {
+                while !running_thread.load(std::sync::atomic::Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
+                eprintln!("[orchestrator thread] tick");
 
                 // Drain GUI commands before processing planet/explorer responses.
                 while let Ok(cmd) = gui_rx_final.try_recv() {
@@ -298,6 +284,10 @@ impl StopHandle {
     /// Returns the current tick count at the time of handle creation.
     pub fn tick(&self) -> u64 {
         self.tick.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn reset_tick(&self) {
+        self.tick.store(0, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

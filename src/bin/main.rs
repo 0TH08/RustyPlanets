@@ -21,7 +21,7 @@ use skycartel::broadcast_log::{BroadcastLogger, LogEntry};
 use skycartel::common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
 use skycartel::common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
 use skycartel::common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
-use skycartel::orchestrator::{GuiCommand, Orchestrator};
+use skycartel::orchestrator::{GuiCommand, Orchestrator, StopHandle};
 use skycartel::create_planet;
 use skycartel::create_planet_with_telemetry;
 use skycartel::explorer::{Bag, Explorer};
@@ -37,6 +37,7 @@ struct AppState {
     gui_tx: Sender<GuiCommand>,
     log_tx: broadcast::Sender<LogEntry>,
     topology: Arc<HashMap<u32, Vec<u32>>>,
+    stop_handle: Arc<StopHandle>,
 }
 
 // ── API response types ────────────────────────────────────────────────
@@ -126,9 +127,17 @@ async fn set_simulation_run_state(
 ) -> Json<StatusResponse> {
     let sim = &state.telemetry.sim_status;
     match body.runState.as_str() {
-        "running" => sim.run_state.store(true, Ordering::SeqCst),
-        "paused" => sim.run_state.store(false, Ordering::SeqCst),
+        "running" => {
+            state.stop_handle.start();
+            sim.run_state.store(true, Ordering::SeqCst);
+        }
+        "paused" => {
+            state.stop_handle.stop();
+            sim.run_state.store(false, Ordering::SeqCst);
+        }
         "idle" => {
+            state.stop_handle.stop();
+            state.stop_handle.reset_tick();
             sim.run_state.store(false, Ordering::SeqCst);
             sim.set_tick(0);
         }
@@ -154,6 +163,8 @@ async fn set_simulation_speed(
 
 async fn reset_simulation(State(state): State<AppState>) -> Json<StatusResponse> {
     let sim = &state.telemetry.sim_status;
+    state.stop_handle.stop();
+    state.stop_handle.reset_tick();
     sim.set_tick(0);
     sim.run_state.store(false, Ordering::SeqCst);
     sim.set_speed(1.0);
@@ -521,7 +532,7 @@ fn main() {
     // Bug B/C fix: create and run the Orchestrator with all wired channels.
     // All GUI-triggered actions (sunray, asteroid, start/stop planet, move explorer)
     // go through gui_tx so the Orchestrator remains the single coordinator.
-    let stop_handle = Orchestrator::new(
+    let stop_handle = Arc::new(Orchestrator::new(
         planet_senders.clone(),
         planet_explorer_senders.clone(),
         planet_to_orch_rx,
@@ -532,7 +543,7 @@ fn main() {
     .with_explorer_reply_senders(explorer_reply_senders)
     .with_topology((*topology).clone())
     .with_telemetry(telemetry.clone())
-    .run();
+    .run());
     let gui_tx = stop_handle.gui_tx.clone();
 
     // Start GUI server
@@ -546,6 +557,7 @@ fn main() {
             gui_tx,
             log_tx,
             topology,
+            stop_handle,
         };
 
         run_server(addr, state).await;
