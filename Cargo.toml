@@ -11,6 +11,15 @@ path = "src/lib.rs"
 [dependencies]
 common-game = "3.0.0"
 crossbeam-channel = "0.5"
+
+# External planet implementations from the Faire
+orbitron             = { git = "https://github.com/Advanced-Programming-2025-Orbitron/Orbitron.git" }
+rusteze              = { git = "https://github.com/Rust-eze-Advanced-Programming/pub-Rust-eze.git", package = "pub-rust-eze" }
+crabtorio            = { git = "https://github.com/crabtorio/crabtorio.git", package = "planet" }
+immutable_cosmic_borrow = { git = "https://github.com/ImmutableCosmicBorrow/planet.git" }
+luna4                = { git = "https://github.com/luna4-ap2025/Planet_Luna4.git" }
+black_adidas_shoe    = { git = "https://github.com/black-adidas-shoe-org/planet.git" }
+astro_parrot         = { git = "https://github.com/astro-parrot/astro-parrot.git", package = "astro-parrot" }
 log = { version = "0.4", features = ["std"] }
 thiserror = "2.0"
 axum = { version = "0.7", features = ["ws", "macros", "json"] }

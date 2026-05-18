@@ -6,14 +6,8 @@ pub mod errors;
 pub mod resources;
 pub mod state;
 
-// Planet implementation modules
+// Our planet implementation (Skycartel / Type A)
 pub mod skycartel;
-pub mod luna4;
-pub mod blackadidasshoe;
-pub mod immutablecosmicborrow;
-pub mod crabtorio;
-pub mod rusteze;
-pub mod orbitron;
 
 // Re-export the common Planet type for convenience.
 pub type Planet = common_game::components::planet::Planet;

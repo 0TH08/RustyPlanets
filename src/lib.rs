@@ -26,6 +26,7 @@ pub enum PlanetType {
     Rusteze,
     Crabtorio,
     Orbitron,
+    AstroParrot,
 }
 
 /// Creates a planet without telemetry tracking.
@@ -67,43 +68,42 @@ pub fn create_planet(
                 .map_err(|e| format!("Failed to create planet: {e}"))?
         }
         PlanetType::Luna4 => {
-            planet_ai::luna4::Luna4::new(id)
-                .map_err(|e| format!("Failed to create Luna4 planet handle: {e}"))?
-                .create_planet(rx_orchestrator, tx_orchestrator, rx_explorer)
-                .map_err(|e| format!("Failed to create planet: {e}"))?
+            luna4::create_planet(id, rx_orchestrator, tx_orchestrator, rx_explorer)
+                .map_err(|e| format!("Luna4: {e}"))?
         }
         PlanetType::BlackAdidasShoe => {
-            planet_ai::blackadidasshoe::planet::create_planet(
+            black_adidas_shoe::planet::create_planet(
                 rx_orchestrator, tx_orchestrator, rx_explorer, id,
-            )?
+            ).map_err(|e| format!("BlackAdidasShoe: {e}"))?
         }
         PlanetType::ImmutableCosmicBorrow => {
             use std::time::Duration;
-            planet_ai::immutablecosmicborrow::create_planet(
-                false,       // random_mode
-                1.0,         // basic_gen_coeff
-                1.0,         // complex_gen_coeff
-                Duration::from_secs(30), // half_life
-                Duration::from_secs(1),  // min_time_constant
+            immutable_cosmic_borrow::create_planet(
+                false,
+                1.0,
+                1.0,
+                Duration::from_secs(30),
+                Duration::from_secs(1),
                 id,
                 (rx_orchestrator, tx_orchestrator),
                 rx_explorer,
-            )?
+            ).map_err(|e| format!("ImmutableCosmicBorrow: {e}"))?
         }
         PlanetType::Rusteze => {
-            planet_ai::rusteze::ai::create_planet(
-                id, rx_orchestrator, tx_orchestrator, rx_explorer,
-            )?
+            // pub-rust-eze panics internally on error, returns Planet directly
+            rusteze::create_planet(id, rx_orchestrator, tx_orchestrator, rx_explorer)
         }
         PlanetType::Crabtorio => {
-            planet_ai::crabtorio::ai::create_planet(
-                id, (rx_orchestrator, tx_orchestrator), rx_explorer,
-            )?
+            // crabtorio panics internally on error, returns Planet directly
+            crabtorio::create_planet(id, rx_orchestrator, tx_orchestrator, rx_explorer)
         }
         PlanetType::Orbitron => {
-            planet_ai::orbitron::ai::create_planet(
-                id, rx_orchestrator, tx_orchestrator, rx_explorer,
-            )?
+            // orbitron's arg order puts planet_id last
+            orbitron::create_planet(rx_orchestrator, tx_orchestrator, rx_explorer, id)
+        }
+        PlanetType::AstroParrot => {
+            // same arg order as orbitron — planet_id last, returns Planet directly
+            astro_parrot::create_planet(rx_orchestrator, tx_orchestrator, rx_explorer, id)
         }
     };
 
@@ -153,6 +153,7 @@ pub fn create_planet_with_telemetry(
         PlanetType::Rusteze => telemetry::PlanetKind::Rusteze,
         PlanetType::Crabtorio => telemetry::PlanetKind::Crabtorio,
         PlanetType::Orbitron => telemetry::PlanetKind::Orbitron,
+        PlanetType::AstroParrot => telemetry::PlanetKind::AstroParrot,
     };
 
     log_planet_event(
@@ -176,47 +177,13 @@ pub fn create_planet_with_telemetry(
             });
             (planet, tel)
         }
-        PlanetType::Luna4 => {
-            let (planet, stats) = planet_ai::luna4::Luna4::new(id)
-                .map_err(|e| format!("Failed to create Luna4 planet handle: {e}"))?
-                .create_planet_with_stats(rx_orchestrator, tx_orchestrator, rx_explorer)
-                .map_err(|e| format!("Failed to create planet: {e}"))?;
-            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
-        }
-        PlanetType::BlackAdidasShoe => {
-            let (planet, stats) = planet_ai::blackadidasshoe::planet::create_planet_with_stats(
-                rx_orchestrator, tx_orchestrator, rx_explorer, id,
-            )?;
-            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
-        }
-        PlanetType::ImmutableCosmicBorrow => {
-            use std::time::Duration;
-            let (planet, stats) = planet_ai::immutablecosmicborrow::create_planet_with_stats(
-                false, 1.0, 1.0,
-                Duration::from_secs(30),
-                Duration::from_secs(1),
-                id,
-                (rx_orchestrator, tx_orchestrator),
-                rx_explorer,
-            )?;
-            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
-        }
-        PlanetType::Rusteze => {
-            let (planet, stats) = planet_ai::rusteze::ai::create_planet_with_stats(
-                id, rx_orchestrator, tx_orchestrator, rx_explorer,
-            )?;
-            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
-        }
-        PlanetType::Crabtorio => {
-            let (planet, stats) = planet_ai::crabtorio::ai::create_planet_with_stats(
-                id, (rx_orchestrator, tx_orchestrator), rx_explorer,
-            )?;
-            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
-        }
-        PlanetType::Orbitron => {
-            let (planet, stats) = planet_ai::orbitron::ai::create_planet_with_stats(
-                id, rx_orchestrator, tx_orchestrator, rx_explorer,
-            )?;
+        // External planets don't expose internal stats hooks, so we use zeroed telemetry.
+        // They still run and respond correctly — only the GUI counters stay at 0.
+        _ => {
+            let planet = create_planet(id, planet_type, rx_orchestrator, tx_orchestrator, rx_explorer)?;
+            let stats = std::sync::Arc::new(std::sync::Mutex::new(
+                planet_telemetry::SharedPlanetStats::default(),
+            ));
             (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
         }
     };

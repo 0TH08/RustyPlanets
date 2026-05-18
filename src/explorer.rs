@@ -580,7 +580,7 @@ fn pick_best_goal(
     let basics_needed = supported_basics
         .iter()
         .copied()
-        .flat_map(|b| std::iter::repeat(b).take(basic_bag_limit(b) as usize))
+        .flat_map(|b| std::iter::repeat_n(b, basic_bag_limit(b) as usize))
         .collect();
     GoalPlan { goal: None, basics_needed, combination_sequence: vec![] }
 }
@@ -595,6 +595,7 @@ fn complex_bag_limit(c: ComplexResourceType) -> u32 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn autonomous_ai<T: Send + 'static>(
     id: ID,
     mut planet_sender: Sender<ExplorerToPlanet>,
@@ -857,7 +858,7 @@ fn autonomous_ai<T: Send + 'static>(
                             let combo_neighbor = neighbors.iter().copied().find(|n| {
                                 combo_planet_map
                                     .get(&needed_combo)
-                                    .map_or(false, |s| s.contains(n))
+                                    .is_some_and(|s| s.contains(n))
                             });
                             if let Some(n) = combo_neighbor {
                                 (n, format!("goal-directed → {:?} at planet {}", needed_combo, n))

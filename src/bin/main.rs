@@ -377,6 +377,7 @@ const PLANET_CONFIGS: &[PlanetConfig] = &[
     PlanetConfig { name: "RustEze", id: 5, kind: PlanetType::Rusteze, telemetry_kind: PlanetKind::Rusteze },
     PlanetConfig { name: "Crabtorio", id: 6, kind: PlanetType::Crabtorio, telemetry_kind: PlanetKind::Crabtorio },
     PlanetConfig { name: "Orbitron", id: 7, kind: PlanetType::Orbitron, telemetry_kind: PlanetKind::Orbitron },
+    PlanetConfig { name: "AstroParrot", id: 8, kind: PlanetType::AstroParrot, telemetry_kind: PlanetKind::AstroParrot },
 ];
 
 fn load_topology(path: &str) -> HashMap<u32, Vec<u32>> {

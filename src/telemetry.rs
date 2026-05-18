@@ -38,6 +38,7 @@ pub enum PlanetKind {
     Rusteze,
     Crabtorio,
     Orbitron,
+    AstroParrot,
 }
 
 // ── Run state ────────────────────────────────────────────────────────
