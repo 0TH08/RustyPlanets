@@ -100,16 +100,43 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
       .catch(() => {});
   }, []);
 
-  // Poll explorer positions every 3 s
+  // Real-time explorer tracking:
+  //   1. Initial REST call → get current positions for all explorers
+  //   2. WebSocket log stream → parse "Explorer X moved to planet Y" lines for instant updates
   useEffect(() => {
-    const load = () =>
-      fetch(`${API_BASE}/explorers`)
-        .then((r) => r.json())
-        .then((data: ExplorerPos[]) => setExplorers(data))
-        .catch(() => {});
-    load();
-    const id = window.setInterval(load, 3000);
-    return () => window.clearInterval(id);
+    // Initial snapshot
+    fetch(`${API_BASE}/explorers`)
+      .then((r) => r.json())
+      .then((data: ExplorerPos[]) => setExplorers(data))
+      .catch(() => {});
+
+    // Derive WebSocket URL from API base (http → ws)
+    const wsUrl = API_BASE.replace(/^http/, "ws").replace("/api", "") + "/ws/logs";
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
+      try {
+        const entry = JSON.parse(event.data as string) as { message?: string };
+        const msg = entry.message ?? "";
+        // Match: "Explorer 2 moved to planet 5 (was on …)"
+        const match = msg.match(/^Explorer (\d+) moved to planet (\d+)/);
+        if (match) {
+          const explorerId = parseInt(match[1], 10);
+          const planetId   = parseInt(match[2], 10);
+          setExplorers((prev) =>
+            prev.map((e) =>
+              e.id === explorerId ? { ...e, currentPlanetId: planetId } : e
+            )
+          );
+        }
+      } catch (_) {
+        // ignore malformed frames
+      }
+    };
+
+    ws.onerror = () => { /* silent — simulation may not be running */ };
+
+    return () => ws.close();
   }, []);
 
   const size = 340;
@@ -201,6 +228,13 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
                 <stop offset="0%" stopColor="#fff9c4" />
                 <stop offset="100%" stopColor="#fbc02d" />
               </radialGradient>
+              <filter id="explorerGlow" x="-80%" y="-80%" width="260%" height="260%">
+                <feGaussianBlur stdDeviation="2.5" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
             </defs>
 
             {/* Central star */}
@@ -269,23 +303,33 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
               if (!e.currentPlanetId) return null;
               const pos = positions[e.currentPlanetId];
               if (!pos) return null;
-              // Offset each explorer slightly so they don't stack
-              const angle = (i * Math.PI * 0.75);
-              const ex = pos.x + Math.cos(angle) * 13;
-              const ey = pos.y + Math.sin(angle) * 13;
+              // Spread explorers in a ring 20px out from planet center
+              const spreadAngle = i * (Math.PI * 2 / Math.max(explorers.length, 1));
+              const ex = pos.x + Math.cos(spreadAngle) * 20;
+              const ey = pos.y + Math.sin(spreadAngle) * 20;
+              const explorerColor = i === 0 ? "#f59e0b" : "#a78bfa";
               return (
-                <g key={`explorer-${e.id}`}>
-                  {/* Diamond spacecraft icon */}
+                <g key={`explorer-${e.id}`} filter="url(#explorerGlow)">
+                  {/* Outer glow halo */}
+                  <circle cx={ex} cy={ey} r={9} fill={explorerColor} opacity={0.18} />
+                  {/* Mid glow */}
+                  <circle cx={ex} cy={ey} r={6} fill={explorerColor} opacity={0.30} />
+                  {/* Diamond body */}
                   <polygon
-                    points={`${ex},${ey - 5} ${ex + 4},${ey} ${ex},${ey + 5} ${ex - 4},${ey}`}
-                    fill="#f59e0b"
-                    opacity={0.95}
+                    points={`${ex},${ey - 7} ${ex + 5},${ey} ${ex},${ey + 7} ${ex - 5},${ey}`}
+                    fill={explorerColor}
+                    stroke="#fff"
+                    strokeWidth={0.8}
+                    opacity={1}
                   />
+                  {/* Label */}
                   <text
-                    x={ex + 7}
-                    y={ey + 3}
-                    fill="#fbbf24"
-                    fontSize="7"
+                    x={ex}
+                    y={ey + 17}
+                    fill={explorerColor}
+                    fontSize="8"
+                    fontWeight="bold"
+                    textAnchor="middle"
                     style={{ pointerEvents: "none" }}
                   >
                     E{e.id}
@@ -386,12 +430,17 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
                 🛸 Explorers ({explorers.length})
               </Typography>
               <Stack spacing={0.5}>
-                {explorers.map((e) => {
-                  const pName = planets.find((p) => p.id === e.currentPlanetId)?.name ?? "Unknown";
+                {explorers.map((e, i) => {
+                  const explorerColor = i === 0 ? "#f59e0b" : "#a78bfa";
+                  const pName = planets.find((p) => p.id === e.currentPlanetId)?.name ?? "—";
                   return (
-                    <Typography key={e.id} sx={{ fontSize: "11px", color: "#9ca3af" }}>
-                      E{e.id} → {pName}
-                    </Typography>
+                    <Box key={e.id} display="flex" alignItems="center" gap={0.75}>
+                      <Box sx={{ width: 8, height: 8, background: explorerColor, clipPath: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)" }} />
+                      <Typography sx={{ fontSize: "11px", color: "#9ca3af" }}>
+                        E{e.id} → <span style={{ color: explorerColor }}>{pName}</span>
+                        {e.currentPlanetId ? <span style={{ color: "#4b5563", fontSize: "10px" }}> (#{e.currentPlanetId})</span> : null}
+                      </Typography>
+                    </Box>
                   );
                 })}
               </Stack>
