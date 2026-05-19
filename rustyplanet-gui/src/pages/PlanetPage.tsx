@@ -95,7 +95,7 @@ const BTN = {
   },
 };
 
-export function PlanetPage({}: PlanetPageProps) {
+export function PlanetPage({ mode }: PlanetPageProps) {
   const {
     planets,
     selectedPlanet,
@@ -113,7 +113,12 @@ export function PlanetPage({}: PlanetPageProps) {
     setToast({ msg, severity });
 
   useEffect(() => {
-    void loadPlanets();
+    loadPlanets().then(() => {
+      const { selectedPlanetId, planets, selectPlanet } = usePlanetStore.getState();
+      if (selectedPlanetId == null && planets.length > 0) {
+        selectPlanet(planets[0].id);
+      }
+    });
     const id = setInterval(() => void loadPlanets(), 1500);
     return () => clearInterval(id);
   }, [loadPlanets]);
@@ -404,6 +409,24 @@ export function PlanetPage({}: PlanetPageProps) {
           </Typography>
         )}
       </StyledCard>
+
+      {/* Debug panel */}
+      {mode === "debug" && p && (
+        <StyledCard>
+          {SECTION_TITLE("Debug — Raw Telemetry")}
+          <Box sx={{ p: 1.5, borderRadius: 2, background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.1)" }}>
+            <Typography sx={{ fontSize: 12, color: "#f87171", fontFamily: "monospace", lineHeight: 1.8 }}>
+              {`id:            ${p.summary.id}`}{'\n'}
+              {`name:          ${p.summary.name}`}{'\n'}
+              {`kind:          ${p.summary.kind}`}{'\n'}
+              {`aiRunning:     ${p.summary.aiRunning}`}{'\n'}
+              {`explorerCount: ${p.summary.explorerCount}`}{'\n'}
+              {`cells:         ${p.cells.length} total, ${p.cells.filter(c => c.charged).length} charged`}{'\n'}
+              {`errors:        ${p.summary.errorsEncountered}`}
+            </Typography>
+          </Box>
+        </StyledCard>
+      )}
 
       {/* Toast */}
       <Snackbar

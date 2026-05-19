@@ -6,7 +6,7 @@ use std::thread;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
-use axum::http::Method;
+use axum::http::{Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -251,20 +251,33 @@ async fn get_planet_details(
     }
 }
 
+#[derive(Serialize)]
+struct ErrorBody {
+    error: String,
+}
+
 async fn start_planet(
     State(state): State<AppState>,
     Path(id): Path<u32>,
-) -> Json<SimpleStatus> {
-    let _ = state.gui_tx.send(GuiCommand::StartPlanet { planet_id: id });
-    Json(SimpleStatus { status: "ok".to_string() })
+) -> Result<Json<SimpleStatus>, (StatusCode, Json<ErrorBody>)> {
+    state.gui_tx
+        .send(GuiCommand::StartPlanet { planet_id: id })
+        .map_err(|_| {
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorBody { error: "Orchestrator is not running".into() }))
+        })?;
+    Ok(Json(SimpleStatus { status: "ok".to_string() }))
 }
 
 async fn stop_planet(
     State(state): State<AppState>,
     Path(id): Path<u32>,
-) -> Json<SimpleStatus> {
-    let _ = state.gui_tx.send(GuiCommand::StopPlanet { planet_id: id });
-    Json(SimpleStatus { status: "ok".to_string() })
+) -> Result<Json<SimpleStatus>, (StatusCode, Json<ErrorBody>)> {
+    state.gui_tx
+        .send(GuiCommand::StopPlanet { planet_id: id })
+        .map_err(|_| {
+            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorBody { error: "Orchestrator is not running".into() }))
+        })?;
+    Ok(Json(SimpleStatus { status: "ok".to_string() }))
 }
 
 async fn move_explorer(
@@ -546,21 +559,29 @@ fn main() {
     .run());
     let gui_tx = stop_handle.gui_tx.clone();
 
-    // Start GUI server
+    // Start GUI server with graceful shutdown on Ctrl+C
     let rt = Builder::new_multi_thread().enable_all().build().unwrap();
-    rt.block_on(async {
+    let server_stop_handle = Arc::clone(&stop_handle);
+    rt.block_on(async move {
         let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
         println!("Server on http://{}", addr);
 
         let state = AppState {
             telemetry,
-            gui_tx,
+            gui_tx: gui_tx.clone(),
             log_tx,
             topology,
             stop_handle,
         };
 
-        run_server(addr, state).await;
+        tokio::select! {
+            _ = run_server(addr, state) => {},
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nShutdown signal received — stopping simulation...");
+                server_stop_handle.stop();
+                println!("Simulation stopped. Goodbye!");
+            }
+        }
     });
 }
 

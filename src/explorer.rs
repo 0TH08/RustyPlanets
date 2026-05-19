@@ -1,3 +1,4 @@
+use crate::player_log;
 use std::thread::{self, JoinHandle};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -300,7 +301,7 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
     }
 
     fn handle_reset_explorer_ai(&mut self) -> ExplorerToOrchestrator<T> {
-        log::info!("[Explorer #{}] Resetting autonomous AI", self.id);
+        player_log!("[Explorer #{}] Resetting autonomous AI", self.id);
         self.ai_running.store(false, Ordering::SeqCst);
         if let Ok(mut handle) = self.ai_thread.lock() {
             if let Some(h) = handle.take() {
@@ -320,7 +321,7 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
         if let Some(h) = self.ai_thread.lock().unwrap().take() {
             let _ = h.join();
         }
-        log::info!("[Explorer #{}] Stopping autonomous AI", self.id);
+        player_log!("[Explorer #{}] Stopping autonomous AI", self.id);
         ExplorerToOrchestrator::StopExplorerAIResult { explorer_id: self.id }
     }
 
@@ -329,7 +330,7 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
-            log::info!("[Explorer #{}] Starting autonomous AI", self.id);
+            player_log!("[Explorer #{}] Starting autonomous AI", self.id);
             self.spawn_ai_thread();
         } else {
             log::debug!("[Explorer #{}] AI already running — ignoring start", self.id);
@@ -806,7 +807,7 @@ fn autonomous_ai<T: Send + 'static>(
 
                                 match recv_planet(&planet_receiver, &ai_running) {
                                     Some(PlanetToExplorer::CombineResourceResponse { complex_response: Ok(r) }) => {
-                                        log::info!("[Explorer #{}] Craft: ✓ {:?} created", id, c);
+                                        player_log!("[Explorer #{}] Crafted {:?}", id, c);
                                         bag.lock().unwrap().insert_complex_resource_in_bag(r);
                                         remaining_combos.pop_front();
                                     }
@@ -894,7 +895,7 @@ fn autonomous_ai<T: Send + 'static>(
                         match planet_rx.recv_timeout(Duration::from_secs(5)) {
                             Ok(Some(new_sender)) => {
                                 planet_sender = new_sender;
-                                log::info!("[Explorer #{}] Moved to planet {}", id, dst);
+                                player_log!("[Explorer #{}] Moved to planet {}", id, dst);
                             }
                             Ok(None) => {
                                 log::debug!("[Explorer #{}] Move to planet {} was declined", id, dst);

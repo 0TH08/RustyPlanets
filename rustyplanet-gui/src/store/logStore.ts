@@ -9,6 +9,7 @@ interface BackendLogEntry {
   level: string
   target: string
   message: string
+  player?: boolean
 }
 
 interface LogState {
@@ -41,6 +42,7 @@ export const useLogStore = create<LogState>((set) => ({
           level: raw.level.toLowerCase() as LogLevel,
           source: raw.target,
           message: raw.message,
+          player: raw.player ?? false,
         }
         set((state) => ({ logs: [...state.logs.slice(-4999), entry] }))
       } catch {

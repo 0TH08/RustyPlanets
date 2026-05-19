@@ -11,6 +11,7 @@ use common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, Orch
 use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
 use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 use crate::explorer::Bag;
+use crate::player_log;
 use crate::telemetry::TelemetryHub;
 
 /// Commands the GUI server sends to the Orchestrator instead of writing
@@ -256,8 +257,10 @@ pub fn new(
                     tel.sim_status.set_tick(current_tick);
                 }
 
-                // sleep a bit between ticks
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                // sleep between ticks — respect the speed setting
+                let speed = telemetry.as_ref().map_or(1.0, |t| t.sim_status.read_speed().max(0.1));
+                let sleep_ms = (500.0 / speed).max(20.0) as u64;
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
             }
         });
 
@@ -375,10 +378,10 @@ impl Orchestrator {
     fn handle_asteroid_ack(&mut self, planet_id : u32, rocket: Option<Rocket>) {
         match rocket {
             Some(_rocket) => {
-                log::info!("Planet {planet_id} deflected the asteroid");
+                player_log!("Planet {planet_id} deflected the asteroid");
             }
             None => {
-                log::warn!("Planet {planet_id} was hit by an asteroid and is being destroyed");
+                player_log!("Planet {planet_id} was hit by an asteroid and is being destroyed");
                 if let Err(e) = self.kill_planet(planet_id) {
                     log::error!("Failed to kill planet {planet_id}: {e}");
                 }
@@ -389,7 +392,7 @@ impl Orchestrator {
     // planet confirmed an explorer arrived — log success or failure
     fn handle_incoming_explorer_response(&self, planet_id : u32, explorer_id : u32, res: Result<(), String>) {
         match res{
-            Ok(_) => {log::info!("Explorer {explorer_id} arrived at planet {planet_id}")},
+            Ok(_) => {player_log!("Explorer {explorer_id} arrived at planet {planet_id}")},
             Err(e)=>{log::warn!("Explorer {explorer_id} failed to arrive at planet {planet_id}: {e}")},
         }
     }
@@ -427,7 +430,7 @@ impl Orchestrator {
     // planet confirmed an explorer departed — log success or failure
     fn handle_outgoing_explorer_response(&self, planet_id : u32, explorer_id : u32, res: Result<(), String>) {
         match res{
-            Ok(_)=> {log::info!("Explorer {explorer_id} left planet {planet_id}")},
+            Ok(_)=> {player_log!("Explorer {explorer_id} left planet {planet_id}")},
             Err(e)=> {log::warn!("Explorer {explorer_id} failed to leave planet {planet_id}: {e}")}
         }
     }
@@ -435,21 +438,21 @@ impl Orchestrator {
     // planet confirmed its AI has started
     fn handle_start_planet_ai_result(&mut self, planet_id : u32) {
         if self.validate_planet_state_transition(planet_id, PlanetState::Running) {
-            log::info!("Planet AI started for planet {planet_id}");
+            player_log!("Planet AI started for planet {planet_id}");
         }
     }
 
     // planet confirmed its AI has stopped
     fn handle_stop_planet_ai_result(&mut self, planet_id : u32) {
         if self.validate_planet_state_transition(planet_id, PlanetState::Stopping) {
-            log::info!("Planet AI stopped for planet {planet_id}");
+            player_log!("Planet AI stopped for planet {planet_id}");
         }
     }
 
     // planet confirmed it has stopped
     fn handle_stopped(&mut self, planet_id : u32) {
         if self.validate_planet_state_transition(planet_id, PlanetState::Idle) {
-            log::info!("Planet {planet_id} stopped");
+            player_log!("Planet {planet_id} stopped");
         }
     }
 }
@@ -543,12 +546,12 @@ impl Orchestrator {
 
     fn handle_explorer_started(&mut self, explorer_id: u32) {
         if self.validate_explorer_state_transition(explorer_id, ExplorerState::Running) {
-            log::info!("Explorer {explorer_id} AI started");
+            player_log!("Explorer {explorer_id} AI started");
         }
     }
 
     fn handle_explorer_killed(&mut self, explorer_id: u32) {
-        log::warn!("Explorer {explorer_id} has been killed");
+        player_log!("Explorer {explorer_id} has been killed");
         self.explorer_alive.insert(explorer_id, false);
         self.explorer_states.insert(explorer_id, ExplorerState::Idle);
         self.explorer_planet.remove(&explorer_id);
@@ -556,7 +559,7 @@ impl Orchestrator {
 
     fn handle_explorer_moved(&mut self, explorer_id: u32, planet_id: u32) {
         let old_planet = self.explorer_planet.insert(explorer_id, planet_id);
-        log::info!("Explorer {explorer_id} moved to planet {planet_id} (was on {:?})", old_planet);
+        player_log!("Explorer {explorer_id} moved to planet {planet_id} (was on {:?})", old_planet);
         if let Some(ref tel) = self.telemetry {
             tel.update_explorer_planet(explorer_id, planet_id);
         }
@@ -692,9 +695,13 @@ impl Orchestrator {
         let valid = matches!(
             (current, new_state),
             (PlanetState::Idle, PlanetState::Starting)
+            | (PlanetState::Idle, PlanetState::Running)
             | (PlanetState::Starting, PlanetState::Running)
             | (PlanetState::Running, PlanetState::Stopping)
+            | (PlanetState::Running, PlanetState::Starting)
             | (PlanetState::Stopping, PlanetState::Idle)
+            | (PlanetState::Stopping, PlanetState::Starting)
+            | (PlanetState::Stopping, PlanetState::Running)
         );
 
         if valid {
@@ -741,10 +748,18 @@ impl Orchestrator {
 
         // start all planets
         let planet_ids: Vec<u32> = self.planet_senders.keys().copied().collect();
-        for planet_id in planet_ids {
-            self.planet_alive.insert(planet_id, true);
-            self.planet_states.insert(planet_id, PlanetState::Starting);
-            self.start_planet(planet_id)?;
+        for planet_id in &planet_ids {
+            self.planet_alive.insert(*planet_id, true);
+            self.planet_states.insert(*planet_id, PlanetState::Starting);
+            self.start_planet(*planet_id)?;
+        }
+        // mark AI as running in telemetry hub so GUI shows correct initial state
+        if let Some(ref tel) = self.telemetry {
+            for planet_id in &planet_ids {
+                if let Some(entry) = tel.planets.read().unwrap().get(planet_id) {
+                    entry.ai_running.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
         }
 
         // Pre-charge all planet cells before starting explorers so the first

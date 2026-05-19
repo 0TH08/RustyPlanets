@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 
 use serde::{Serialize, Deserialize};
-use common_game::components::planet::{PlanetAI, PlanetState, DummyPlanetState};
+use common_game::components::planet::{Planet, PlanetAI, PlanetState, DummyPlanetState};
 use common_game::components::resource::{Generator, Combinator};
 use common_game::components::rocket::Rocket;
 use common_game::components::sunray::Sunray;
@@ -169,12 +169,12 @@ impl PlanetTelemetry for GenericPlanetTelemetry {
 }
 
 /// Wraps any [PlanetAI] and intercepts calls to populate [SharedPlanetStats].
-pub struct StatsTrackingAI<Inner> {
-    pub inner: Inner,
+pub struct StatsTrackingAI {
+    pub inner: Box<dyn PlanetAI>,
     pub stats: Arc<Mutex<SharedPlanetStats>>,
 }
 
-impl<Inner: PlanetAI + Send + 'static> PlanetAI for StatsTrackingAI<Inner> {
+impl PlanetAI for StatsTrackingAI {
     fn handle_sunray(&mut self, state: &mut PlanetState, gen: &Generator, comb: &Combinator, sunray: Sunray) {
         self.inner.handle_sunray(state, gen, comb, sunray);
         let mut s = self.stats.lock().unwrap();
@@ -243,4 +243,30 @@ impl<Inner: PlanetAI + Send + 'static> PlanetAI for StatsTrackingAI<Inner> {
     fn on_stop(&mut self, state: &PlanetState, gen: &Generator, comb: &Combinator) {
         self.inner.on_stop(state, gen, comb);
     }
+}
+
+/// Wraps a planet's AI with [`StatsTrackingAI`] so that every AI method call
+/// updates the shared stats. Use this for external planets that don't natively
+/// expose telemetry hooks.
+pub fn wrap_planet_ai(planet: &mut Planet, stats: Arc<Mutex<SharedPlanetStats>>) {
+    struct PlaceholderAI;
+
+    impl PlanetAI for PlaceholderAI {
+        fn handle_sunray(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator, _: Sunray) {
+            unreachable!("PlaceholderAI must not be invoked");
+        }
+        fn handle_asteroid(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator) -> Option<Rocket> {
+            unreachable!("PlaceholderAI must not be invoked");
+        }
+        fn handle_internal_state_req(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator) -> DummyPlanetState {
+            unreachable!("PlaceholderAI must not be invoked");
+        }
+        fn handle_explorer_msg(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator, _: ExplorerToPlanet) -> Option<PlanetToExplorer> {
+            unreachable!("PlaceholderAI must not be invoked");
+        }
+    }
+
+    let original = std::mem::replace(&mut planet.ai, Box::new(PlaceholderAI));
+    let wrapped = StatsTrackingAI { inner: original, stats };
+    planet.ai = Box::new(wrapped);
 }

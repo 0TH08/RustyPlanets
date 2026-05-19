@@ -15,6 +15,14 @@
 use log::{Level, Metadata, Record};
 use tokio::sync::broadcast;
 
+/// Log a player-facing message (appears in player-friendly log view).
+#[macro_export]
+macro_rules! player_log {
+    ($($arg:tt)*) => {
+        log::info!("[PLAYER] {}", format_args!($($arg)*))
+    };
+}
+
 /// Serializable log entry sent to WebSocket clients.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
@@ -26,6 +34,7 @@ pub struct LogEntry {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub message: String,
+    pub player: bool,
 }
 
 /// A log sink that broadcasts log records to all subscribers.
@@ -55,6 +64,12 @@ impl BroadcastLogger {
 
     fn record_to_entry(record: &Record) -> LogEntry {
         let now = chrono::Utc::now();
+        let raw = record.args().to_string();
+        let (player, message) = if raw.starts_with("[PLAYER]") {
+            (true, raw[8..].trim().to_string())
+        } else {
+            (false, raw)
+        };
         LogEntry {
             timestamp: now.to_rfc3339(),
             level: record.level().to_string(),
@@ -62,7 +77,8 @@ impl BroadcastLogger {
             module_path: record.module_path().map(String::from),
             file: record.file().map(String::from),
             line: record.line(),
-            message: record.args().to_string(),
+            message,
+            player,
         }
     }
 }

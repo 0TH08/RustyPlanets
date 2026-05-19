@@ -14,7 +14,7 @@ interface PlanetState {
   selectPlanet: (id: number) => Promise<void>
 }
 
-export const usePlanetStore = create<PlanetState>((set, get) => ({
+export const usePlanetStore = create<PlanetState>((set) => ({
   planets: [],
   selectedPlanetId: null,
   selectedPlanet: null,
@@ -26,10 +26,6 @@ export const usePlanetStore = create<PlanetState>((set, get) => ({
     try {
       const planets = await getPlanets()
       set({ planets })
-      const currentSelected = get().selectedPlanetId ?? planets[0]?.id ?? null
-      if (currentSelected != null) {
-        await get().selectPlanet(currentSelected)
-      }
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Failed to load planets' })
     } finally {

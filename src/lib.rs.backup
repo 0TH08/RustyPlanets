@@ -177,14 +177,13 @@ pub fn create_planet_with_telemetry(
             });
             (planet, tel)
         }
-        // External planets don't expose native telemetry hooks, so we wrap the AI with
-        // StatsTrackingAI to populate SharedPlanetStats from every AI method call.
+        // External planets don't expose internal stats hooks, so we use zeroed telemetry.
+        // They still run and respond correctly — only the GUI counters stay at 0.
         _ => {
-            let mut planet = create_planet(id, planet_type, rx_orchestrator, tx_orchestrator, rx_explorer)?;
+            let planet = create_planet(id, planet_type, rx_orchestrator, tx_orchestrator, rx_explorer)?;
             let stats = std::sync::Arc::new(std::sync::Mutex::new(
                 planet_telemetry::SharedPlanetStats::default(),
             ));
-            planet_telemetry::wrap_planet_ai(&mut planet, stats.clone());
             (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
         }
     };

@@ -91,10 +91,15 @@ export function LogsPage({ mode }: LogsPageProps) {
   }, []);
 
   const visibleLogs = useMemo(() => {
-    if (levelFilter === "all") return logs;
-
-    return logs.filter((log) => log.level === levelFilter);
-  }, [logs, levelFilter]);
+    let filtered = logs;
+    if (mode !== "debug") {
+      filtered = filtered.filter((log) => log.player);
+    }
+    if (levelFilter !== "all") {
+      filtered = filtered.filter((log) => log.level === levelFilter);
+    }
+    return filtered;
+  }, [logs, levelFilter, mode]);
 
   const streamLabel = isStreaming ? "STREAMING" : "PAUSED";
 
@@ -290,15 +295,23 @@ export function LogsPage({ mode }: LogsPageProps) {
               Download Logs ({logs.length})
             </Button>
 
-            {mode !== "debug" && (
+            {mode !== "debug" ? (
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  color: "#4ade80",
+                }}
+              >
+                Player mode — showing only player-facing logs. Switch to debug mode to see all.
+              </Typography>
+            ) : (
               <Typography
                 sx={{
                   fontSize: 12,
                   color: "#fb923c",
                 }}
               >
-                In player mode, very low-level logs may
-                be hidden in the future.
+                Debug mode — showing all logs.
               </Typography>
             )}
           </Stack>

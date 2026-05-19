@@ -1,8 +1,9 @@
-import { Box, Card, Chip, Stack, Typography } from "@mui/material";
-import { useEffect } from "react";
+import { Box, Card, Chip, Stack, Typography, Table, TableBody, TableCell, TableRow } from "@mui/material";
+import { useEffect, useState } from "react";
 import styled from "@emotion/styled";
 
 import { usePlanetStore } from "../store/planetStore";
+import { useSimulationStore } from "../store/simulationStore";
 import { SimulationBar } from "../components/SimulationBar";
 import { PlanetsView } from "../components/PlanetsView";
 
@@ -47,33 +48,52 @@ const chipStyle = {
   letterSpacing: "0.05em",
 };
 
-const infoBoxStyle = {
-  p: 2,
-  borderRadius: "12px",
-  background: "rgba(255,255,255,0.02)",
-  border: "1px solid rgba(255,255,255,0.06)",
-};
 
-const descriptionStyle = {
-  fontSize: "13px",
-  color: "#9ca3af",
-  lineHeight: 1.7,
-};
+
+interface ExplorerEntry {
+  id: number;
+  currentPlanetId: number | null;
+  aiRunning: boolean;
+}
 
 function DebugPanel() {
+  const { planets } = usePlanetStore();
+  const { runState, tick, speed } = useSimulationStore();
+  const [explorers, setExplorers] = useState<ExplorerEntry[]>([]);
+
+  useEffect(() => {
+    const load = () =>
+      fetch("http://localhost:8080/api/explorers")
+        .then((r) => r.json())
+        .then((data: ExplorerEntry[]) => setExplorers(data))
+        .catch(() => {});
+    load();
+    const id = window.setInterval(load, 3000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const aiRunning = planets.filter((p) => p.aiRunning).length;
+  const aiStopped = planets.length - aiRunning;
+
   return (
     <StyledCard>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
         <Typography sx={titleStyle}>Debug Metrics</Typography>
-
         <Chip label="DEBUG MODE" size="small" sx={chipStyle} />
       </Box>
 
-      <Box sx={infoBoxStyle}>
-        <Typography sx={descriptionStyle}>
-          Internal engine metrics and diagnostics shown here in debug mode.
-        </Typography>
-      </Box>
+      <Table size="small" sx={{ "& td": { color: "#9ca3af", fontSize: 13, borderBottom: "1px solid rgba(255,255,255,0.04)", py: 0.75 } }}>
+        <TableBody>
+          <TableRow><TableCell sx={{ fontWeight: 600, color: "#e5e7eb" }}>Run State</TableCell><TableCell>{runState}</TableCell></TableRow>
+          <TableRow><TableCell sx={{ fontWeight: 600, color: "#e5e7eb" }}>Tick</TableCell><TableCell>{tick}</TableCell></TableRow>
+          <TableRow><TableCell sx={{ fontWeight: 600, color: "#e5e7eb" }}>Speed</TableCell><TableCell>{speed.toFixed(1)}x</TableCell></TableRow>
+          <TableRow><TableCell sx={{ fontWeight: 600, color: "#e5e7eb" }}>Planets Total</TableCell><TableCell>{planets.length}</TableCell></TableRow>
+          <TableRow><TableCell sx={{ fontWeight: 600, color: "#e5e7eb" }}>AI Running / Stopped</TableCell><TableCell>{aiRunning} / {aiStopped}</TableCell></TableRow>
+          <TableRow><TableCell sx={{ fontWeight: 600, color: "#e5e7eb" }}>Explorers</TableCell><TableCell>{explorers.length}</TableCell></TableRow>
+          <TableRow><TableCell sx={{ fontWeight: 600, color: "#e5e7eb" }}>Total Generated (all planets)</TableCell><TableCell>{planets.reduce((s, p) => s + p.totalResourcesGenerated, 0)}</TableCell></TableRow>
+          <TableRow><TableCell sx={{ fontWeight: 600, color: "#e5e7eb" }}>Rockets Built (all planets)</TableCell><TableCell>{planets.reduce((s, p) => s + p.rocketsBuilt, 0)}</TableCell></TableRow>
+        </TableBody>
+      </Table>
     </StyledCard>
   );
 }

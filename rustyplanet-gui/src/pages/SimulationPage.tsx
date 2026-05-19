@@ -356,8 +356,15 @@ export function SimulationPage({ mode }: SimulationPageProps) {
               border: "1px solid rgba(239,68,68,0.12)",
             }}
           >
-            <Typography sx={{ fontSize: 13, color: "#f87171" }}>
-              Debug mode enabled. Additional diagnostics can be added here.
+            <Typography sx={{ fontSize: 13, color: "#f87171", fontWeight: 600, mb: 1 }}>
+              Debug Diagnostics
+            </Typography>
+            <Typography sx={{ fontSize: 12, color: "#9ca3af", fontFamily: "monospace", lineHeight: 1.8 }}>
+              {`runState: ${runState}`}{'\n'}
+              {`tick:      ${tick}`}{'\n'}
+              {`speed:     ${speed.toFixed(2)}x`}{'\n'}
+              {`speed_ms:  ${(500.0 / Math.max(speed, 0.1)).toFixed(0)} ms/tick`}{'\n'}
+              {`isBusy:    ${isBusy}`}
             </Typography>
           </Box>
         )}

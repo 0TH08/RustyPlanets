@@ -7,5 +7,6 @@ export interface LogEntry {
   source: string
   planetId?: number
   message: string
+  player: boolean
 }
 
