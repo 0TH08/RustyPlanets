@@ -1318,6 +1318,106 @@ export function VisualizationPage({
               )}
             </Box>
 
+            {/* Active Planets Panel - select a planet first */}
+            <Box
+                sx={{
+                  p: 2,
+                  borderRadius: "12px",
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                }}
+            >
+              <Typography
+                  sx={{
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    color: "#fff",
+                    mb: 1.5,
+                  }}
+              >
+                Active Planets
+              </Typography>
+
+              <Stack spacing={1}>
+                {planets.map((p) => {
+                  const vis = PLANET_VISUAL[p.id];
+
+                  if (!vis) return null;
+
+                  return (
+                      <Box
+                          key={p.id}
+                          display="flex"
+                          alignItems="center"
+                          justifyContent="space-between"
+                          onClick={() => {
+                            selectPlanet(p.id);
+                            setPlanetActionMessage(null);
+                          }}
+                          sx={{
+                            p: 1,
+                            borderRadius: "10px",
+                            cursor: "pointer",
+                            background:
+                                selectedPlanetId === p.id
+                                    ? "rgba(99,102,241,0.12)"
+                                    : "rgba(255,255,255,0.015)",
+                            border:
+                                selectedPlanetId === p.id
+                                    ? "1px solid rgba(129,140,248,0.35)"
+                                    : "1px solid rgba(255,255,255,0.04)",
+                            "&:hover": {
+                              background: "rgba(99,102,241,0.08)",
+                            },
+                          }}
+                      >
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Box
+                              sx={{
+                                width: 10,
+                                height: 10,
+                                borderRadius: "50%",
+                                background: vis.color,
+                                boxShadow: `0 0 12px ${vis.color}`,
+                              }}
+                          />
+
+                          <Typography sx={{ fontSize: "12px", color: "#e5e7eb" }}>
+                            {p.name}
+                          </Typography>
+                        </Stack>
+
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          {p.aiRunning && (
+                              <Chip
+                                  label="AI"
+                                  size="small"
+                                  sx={{
+                                    height: 16,
+                                    fontSize: "10px",
+                                    background: "rgba(34,197,94,0.15)",
+                                    color: "#4ade80",
+                                    border: "1px solid rgba(34,197,94,0.3)",
+                                  }}
+                              />
+                          )}
+
+                          <Typography
+                              sx={{
+                                fontSize: "11px",
+                                color: "#6b7280",
+                                fontFamily: "monospace",
+                              }}
+                          >
+                            r={vis.radius}
+                          </Typography>
+                        </Stack>
+                      </Box>
+                  );
+                })}
+              </Stack>
+            </Box>
+
             {/* Planet Inspector */}
             {selectedPlanet && (
                 <Box
@@ -1873,106 +1973,6 @@ export function VisualizationPage({
                   </Stack>
                 </Box>
             )}
-
-            {/* Active Planets Panel */}
-            <Box
-                sx={{
-                  p: 2,
-                  borderRadius: "12px",
-                  background: "rgba(255,255,255,0.02)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                }}
-            >
-              <Typography
-                  sx={{
-                    fontSize: "13px",
-                    fontWeight: 600,
-                    color: "#fff",
-                    mb: 1.5,
-                  }}
-              >
-                Active Planets
-              </Typography>
-
-              <Stack spacing={1}>
-                {planets.map((p) => {
-                  const vis = PLANET_VISUAL[p.id];
-
-                  if (!vis) return null;
-
-                  return (
-                      <Box
-                          key={p.id}
-                          display="flex"
-                          alignItems="center"
-                          justifyContent="space-between"
-                          onClick={() => {
-                            selectPlanet(p.id);
-                            setPlanetActionMessage(null);
-                          }}
-                          sx={{
-                            p: 1,
-                            borderRadius: "10px",
-                            cursor: "pointer",
-                            background:
-                                selectedPlanetId === p.id
-                                    ? "rgba(99,102,241,0.12)"
-                                    : "rgba(255,255,255,0.015)",
-                            border:
-                                selectedPlanetId === p.id
-                                    ? "1px solid rgba(129,140,248,0.35)"
-                                    : "1px solid rgba(255,255,255,0.04)",
-                            "&:hover": {
-                              background: "rgba(99,102,241,0.08)",
-                            },
-                          }}
-                      >
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          <Box
-                              sx={{
-                                width: 10,
-                                height: 10,
-                                borderRadius: "50%",
-                                background: vis.color,
-                                boxShadow: `0 0 12px ${vis.color}`,
-                              }}
-                          />
-
-                          <Typography sx={{ fontSize: "12px", color: "#e5e7eb" }}>
-                            {p.name}
-                          </Typography>
-                        </Stack>
-
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          {p.aiRunning && (
-                              <Chip
-                                  label="AI"
-                                  size="small"
-                                  sx={{
-                                    height: 16,
-                                    fontSize: "10px",
-                                    background: "rgba(34,197,94,0.15)",
-                                    color: "#4ade80",
-                                    border: "1px solid rgba(34,197,94,0.3)",
-                                  }}
-                              />
-                          )}
-
-                          <Typography
-                              sx={{
-                                fontSize: "11px",
-                                color: "#6b7280",
-                                fontFamily: "monospace",
-                              }}
-                          >
-                            r={vis.radius}
-                          </Typography>
-                        </Stack>
-                      </Box>
-                  );
-                })}
-              </Stack>
-            </Box>
 
             {/* Topology info */}
             {Object.keys(topology).length > 0 && (
