@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLogStore } from "../store/logStore";
+import { AlertFeed } from "../components/AlertFeed";
 
 import {
   AppBar,
@@ -84,6 +86,13 @@ export function RootLayout() {
   const [mode, setMode] = useState<Mode>("player");
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
 
+  const { startStream, stopStream } = useLogStore();
+
+  useEffect(() => {
+    startStream();
+    return () => stopStream();
+  }, [startStream, stopStream]);
+
   const handleChangeTab = (_: React.SyntheticEvent, value: string) => {
     if (TAB_ORDER.includes(value as TabKey)) {
       setActiveTab(value as TabKey);
@@ -106,7 +115,7 @@ export function RootLayout() {
       case "logs":
         return <LogsPage mode={mode} />;
       case "visualization":
-        return <VisualizationPage mode={mode} />;
+        return <VisualizationPage mode={mode} onChangeTab={setActiveTab} />;
       case "explorers":
         return <ExplorersPage mode={mode} />;
       default:
@@ -220,6 +229,9 @@ export function RootLayout() {
       <Container maxWidth={false} sx={{ flexGrow: 1, py: 4, px: { xs: 2, md: 4 } }}>
         {renderTabContent()}
       </Container>
+
+      {/* Real-time simulation event notifications overlay */}
+      <AlertFeed />
     </Box>
   );
 }

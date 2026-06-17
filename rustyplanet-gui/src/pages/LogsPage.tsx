@@ -12,7 +12,7 @@ import {
   styled,
 } from "@mui/material";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useLogStore } from "../store/logStore";
 
 type Mode = "player" | "debug";
@@ -85,10 +85,7 @@ export function LogsPage({ mode }: LogsPageProps) {
     setLevelFilter,
   } = useLogStore();
 
-  useEffect(() => {
-    startStream();
-    return () => stopStream();
-  }, []);
+
 
   const visibleLogs = useMemo(() => {
     let filtered = logs;

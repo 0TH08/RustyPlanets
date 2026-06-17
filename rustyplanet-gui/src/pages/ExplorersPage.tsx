@@ -5,9 +5,18 @@ import {
   Stack,
   Typography,
   styled,
+  Button,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  CircularProgress,
+  Snackbar,
+  Alert,
 } from "@mui/material";
 
 import { useEffect, useState } from "react";
+import { moveExplorer } from "../services/planetService";
 
 const API_BASE = "http://localhost:8080/api";
 
@@ -95,6 +104,10 @@ function ResourceRow({
 export function ExplorersPage({ mode }: ExplorersPageProps) {
   const [explorers, setExplorers] = useState<ExplorerData[]>([]);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [topology, setTopology] = useState<Record<string, number[]>>({});
+  const [selectedDests, setSelectedDests] = useState<Record<number, number>>({});
+  const [isDispatching, setIsDispatching] = useState<Record<number, boolean>>({});
+  const [toast, setToast] = useState<{ msg: string; severity: "success" | "error" } | null>(null);
 
   useEffect(() => {
     const load = () =>
@@ -109,6 +122,42 @@ export function ExplorersPage({ mode }: ExplorersPageProps) {
     const id = window.setInterval(load, 2000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/topology`)
+      .then((r) => r.json())
+      .then(setTopology)
+      .catch(() => {});
+  }, []);
+
+  const handleDispatch = async (explorerId: number) => {
+    const destId = selectedDests[explorerId];
+    if (!destId) return;
+
+    setIsDispatching((prev) => ({ ...prev, [explorerId]: true }));
+    try {
+      const res = await moveExplorer(explorerId, destId);
+      if (res && res.status === "ok") {
+        setToast({ msg: `Explorer ${explorerId} successfully dispatched!`, severity: "success" });
+        // Clear selected destination for this explorer
+        setSelectedDests((prev) => {
+          const updated = { ...prev };
+          delete updated[explorerId];
+          return updated;
+        });
+        // Immediately fetch updated explorer positions
+        const explRes = await fetch(`${API_BASE}/explorers`);
+        const explData = await explRes.json();
+        setExplorers(explData);
+      } else {
+        setToast({ msg: "Failed to dispatch explorer — check destination path.", severity: "error" });
+      }
+    } catch {
+      setToast({ msg: "Action failed — check if the backend is running.", severity: "error" });
+    } finally {
+      setIsDispatching((prev) => ({ ...prev, [explorerId]: false }));
+    }
+  };
 
   const totalBasic = explorers.reduce(
     (sum, e) =>
@@ -336,6 +385,124 @@ export function ExplorersPage({ mode }: ExplorersPageProps) {
                     </Box>
                   </Stack>
 
+                  {/* Manual Dispatch Section */}
+                  <Box
+                    mt={2.5}
+                    pt={2}
+                    sx={{
+                      borderTop: "1px solid rgba(255,255,255,0.06)",
+                    }}
+                  >
+                    <Typography
+                      sx={{
+                        fontSize: "11px",
+                        color: "#6b7280",
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.08em",
+                        mb: 1.5,
+                      }}
+                    >
+                      Manual Dispatch
+                    </Typography>
+
+                    {explorer.currentPlanetId === null ? (
+                      <Typography sx={{ fontSize: "12px", color: "#6b7280" }}>
+                        Explorer is not stationed on any planet.
+                      </Typography>
+                    ) : (
+                      (() => {
+                        const neighbors = topology[explorer.currentPlanetId] ?? [];
+                        if (neighbors.length === 0) {
+                          return (
+                            <Typography sx={{ fontSize: "12px", color: "#6b7280" }}>
+                              No neighboring routes found for this planet.
+                            </Typography>
+                          );
+                        }
+
+                        const selectedDest = selectedDests[explorer.id] || "";
+
+                        return (
+                          <Stack direction="row" spacing={2} alignItems="center">
+                            <FormControl size="small" sx={{ minWidth: 160 }}>
+                              <InputLabel id={`dest-label-${explorer.id}`} sx={{ color: "#9ca3af", fontSize: "12px" }}>
+                                Destination
+                              </InputLabel>
+                              <Select
+                                labelId={`dest-label-${explorer.id}`}
+                                label="Destination"
+                                value={selectedDest}
+                                onChange={(e) =>
+                                  setSelectedDests((prev) => ({
+                                    ...prev,
+                                    [explorer.id]: Number(e.target.value),
+                                  }))
+                                }
+                                sx={{
+                                  borderRadius: "10px",
+                                  color: "#fff",
+                                  fontSize: "13px",
+                                  "& .MuiOutlinedInput-notchedOutline": {
+                                    borderColor: "rgba(255,255,255,0.1)",
+                                  },
+                                  "&:hover .MuiOutlinedInput-notchedOutline": {
+                                    borderColor: "rgba(99,102,241,0.4)",
+                                  },
+                                  "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+                                    borderColor: "#818cf8",
+                                  },
+                                  "& .MuiSvgIcon-root": {
+                                    color: "#9ca3af",
+                                  },
+                                }}
+                              >
+                                {neighbors.map((nid) => {
+                                  const name = PLANET_NAMES[nid] ?? `Planet ${nid}`;
+                                  return (
+                                    <MenuItem key={nid} value={nid} sx={{ fontSize: "13px" }}>
+                                      {name}
+                                    </MenuItem>
+                                  );
+                                })}
+                              </Select>
+                            </FormControl>
+
+                            <Button
+                              variant="contained"
+                              size="small"
+                              disabled={!selectedDest || isDispatching[explorer.id]}
+                              onClick={() => handleDispatch(explorer.id)}
+                              sx={{
+                                background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+                                color: "#fff",
+                                borderRadius: "10px",
+                                textTransform: "none",
+                                fontWeight: 600,
+                                px: 2,
+                                height: 38,
+                                boxShadow: "none",
+                                "&:hover": {
+                                  background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
+                                },
+                                "&.Mui-disabled": {
+                                  background: "rgba(255,255,255,0.05)",
+                                  color: "rgba(255,255,255,0.2)",
+                                },
+                              }}
+                            >
+                              {isDispatching[explorer.id] ? (
+                                <CircularProgress size={16} color="inherit" />
+                              ) : (
+                                "Dispatch"
+                              )}
+                            </Button>
+                          </Stack>
+                        );
+                      })()
+                    )}
+                  </Box>
+
                   {/* Debug extras */}
                   {mode === "debug" && (
                     <Box
@@ -361,6 +528,23 @@ export function ExplorersPage({ mode }: ExplorersPageProps) {
           </Stack>
         </Stack>
       )}
+
+      {/* Dispatch Toast Feedback */}
+      <Snackbar
+        open={toast !== null}
+        autoHideDuration={3000}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setToast(null)}
+          severity={toast?.severity ?? "success"}
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {toast?.msg}
+        </Alert>
+      </Snackbar>
     </StyledCard>
   );
 }

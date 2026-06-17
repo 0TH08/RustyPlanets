@@ -108,9 +108,17 @@ export function PlanetPage({ mode }: PlanetPageProps) {
   const p = selectedPlanet;
 
   const [toast, setToast] = useState<{ msg: string; severity: "success" | "error" } | null>(null);
+  const [topology, setTopology] = useState<Record<string, number[]>>({});
 
   const showToast = (msg: string, severity: "success" | "error" = "success") =>
     setToast({ msg, severity });
+
+  useEffect(() => {
+    fetch("http://localhost:8080/api/topology")
+      .then((r) => r.json())
+      .then(setTopology)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     loadPlanets().then(() => {
@@ -124,7 +132,7 @@ export function PlanetPage({ mode }: PlanetPageProps) {
   }, [loadPlanets]);
 
   const runIfPlanet = async (
-    fn: (id: number) => Promise<any>,
+    fn: (id: number) => Promise<unknown>,
     successMsg: string
   ) => {
     if (!selectedPlanetId) return;
@@ -322,6 +330,56 @@ export function PlanetPage({ mode }: PlanetPageProps) {
               </Button>
             </Stack>
           </Stack>
+        )}
+      </StyledCard>
+
+      {/* Neighborhood Navigation */}
+      <StyledCard>
+        {SECTION_TITLE("Neighborhood Navigation")}
+        {p ? (
+          (() => {
+            const neighbors = topology[p.summary.id] ?? [];
+            if (neighbors.length === 0) {
+              return (
+                <Typography sx={{ fontSize: 13, color: "#6b7280" }}>
+                  No neighboring routes mapped for this planet.
+                </Typography>
+              );
+            }
+            return (
+              <Stack direction="row" spacing={1.5} flexWrap="wrap">
+                {neighbors.map((nid) => {
+                  const neighborPlanet = planets.find((pl) => pl.id === nid);
+                  const name = neighborPlanet?.name ?? `Planet ${nid}`;
+                  return (
+                    <Chip
+                      key={nid}
+                      label={`🔗 ${name}`}
+                      size="small"
+                      onClick={() => selectPlanet(nid)}
+                      sx={{
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background: "rgba(99,102,241,0.08)",
+                        color: "#a5b4fc",
+                        border: "1px solid rgba(99,102,241,0.2)",
+                        "&:hover": {
+                          background: "rgba(99,102,241,0.2)",
+                          color: "#fff",
+                          border: "1px solid rgba(99,102,241,0.4)",
+                        },
+                      }}
+                    />
+                  );
+                })}
+              </Stack>
+            );
+          })()
+        ) : (
+          <Typography sx={{ fontSize: 13, color: "#6b7280" }}>
+            Select a planet to view neighborhood connections.
+          </Typography>
         )}
       </StyledCard>
 

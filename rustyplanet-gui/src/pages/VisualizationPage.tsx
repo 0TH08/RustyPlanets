@@ -9,6 +9,7 @@ import {
 
 import { useEffect, useRef, useState } from "react";
 import type { PlanetSummary } from "../types/planet";
+import { usePlanetStore } from "../store/planetStore";
 
 const API_BASE = "http://localhost:8080/api";
 
@@ -16,6 +17,7 @@ type Mode = "player" | "debug";
 
 interface VisualizationPageProps {
   mode: Mode;
+  onChangeTab?: (tab: "overview" | "planet" | "simulation" | "logs" | "visualization" | "explorers") => void;
 }
 
 interface OrbitParams {
@@ -61,12 +63,21 @@ const StyledCard = styled(Card)({
   },
 });
 
-export function VisualizationPage({ mode }: VisualizationPageProps) {
+export function VisualizationPage({ mode, onChangeTab }: VisualizationPageProps) {
   const [time, setTime] = useState(0);
   const [planets, setPlanets] = useState<PlanetSummary[]>([]);
   const [topology, setTopology] = useState<Record<string, number[]>>({});
   const [explorers, setExplorers] = useState<ExplorerPos[]>([]);
   const startRef = useRef<number | null>(null);
+
+  const { selectedPlanetId, selectPlanet } = usePlanetStore();
+
+  const handlePlanetClick = (id: number) => {
+    selectPlanet(id);
+    if (onChangeTab) {
+      onChangeTab("planet");
+    }
+  };
 
   // Animation loop
   useEffect(() => {
@@ -129,7 +140,7 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
             )
           );
         }
-      } catch (_) {
+      } catch {
         // ignore malformed frames
       }
     };
@@ -281,15 +292,34 @@ export function VisualizationPage({ mode }: VisualizationPageProps) {
               const vis = PLANET_VISUAL[p.id];
               const pos = positions[p.id];
               if (!vis || !pos) return null;
+              const isSelected = selectedPlanetId === p.id;
               return (
-                <g key={p.id}>
+                <g
+                  key={p.id}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => handlePlanetClick(p.id)}
+                >
+                  {/* Selection glow ring */}
+                  {isSelected && (
+                    <circle
+                      cx={pos.x}
+                      cy={pos.y}
+                      r={12}
+                      fill="none"
+                      stroke="#fff"
+                      strokeWidth={1}
+                      strokeDasharray="2 2"
+                      opacity={0.8}
+                    />
+                  )}
                   <circle cx={pos.x} cy={pos.y} r={8} fill={vis.color} opacity={0.2} />
                   <circle cx={pos.x} cy={pos.y} r={5} fill={vis.color} />
                   <text
                     x={pos.x + 10}
                     y={pos.y - 6}
-                    fill="#d1d5db"
-                    fontSize="8"
+                    fill={isSelected ? "#fff" : "#d1d5db"}
+                    fontSize={isSelected ? "9" : "8"}
+                    fontWeight={isSelected ? "bold" : "normal"}
                     style={{ pointerEvents: "none" }}
                   >
                     {p.name}

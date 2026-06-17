@@ -161,7 +161,7 @@ export function SimulationPage({ mode }: SimulationPageProps) {
     return () => window.clearInterval(id);
   }, [setBusy, setRunState, setSpeed, setTick]);
 
-  const withBusy = async (fn: () => Promise<any>) => {
+  const withBusy = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try {
       return await fn();
@@ -285,7 +285,7 @@ export function SimulationPage({ mode }: SimulationPageProps) {
           {BUTTONS.map((btn) => (
             <Button
               key={btn.label}
-              variant={btn.variant as any}
+              variant={btn.variant as "text" | "outlined" | "contained"}
               disabled={
                 isBusy ||
                 (btn.onClick === "start" && runState === "running") ||

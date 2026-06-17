@@ -1,6 +1,6 @@
 import { Box, keyframes, Typography } from "@mui/material";
 
-import { useEffect, useState } from "react";
+
 
 import { usePlanetStore } from "../store/planetStore";
 import { useSimulationStore } from "../store/simulationStore";
@@ -51,17 +51,11 @@ const SimTitles = {
 export function SimulationBar() {
   const { planets } = usePlanetStore();
   const { runState, tick, speed } = useSimulationStore();
-  const [stateColor, setStateColor] = useState("#10b981");
-
-  useEffect(() => {
-    if (runState === "running") {
-      setStateColor("#10b981");
-    } else if (runState === "paused") {
-      setStateColor("#ffffff");
-    } else {
-      setStateColor("#ef4444");
-    }
-  }, [runState]);
+  const stateColor = runState === "running"
+    ? "#10b981"
+    : runState === "paused"
+    ? "#ffffff"
+    : "#ef4444";
 
   return (
     <SimBar>
