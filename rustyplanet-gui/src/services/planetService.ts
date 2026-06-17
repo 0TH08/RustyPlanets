@@ -30,7 +30,32 @@ export async function stopPlanet(id: number): Promise<{ status: string }> {
   return res.json()
 }
 
-export async function moveExplorer(explorerId: number, planetId: number): Promise<{ status: string }> {
-  const res = await fetch(`${API_BASE}/explorers/${explorerId}/move/${planetId}`, { method: 'POST' })
+export async function moveExplorer(
+    explorerId: number,
+    planetId: number
+): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/explorers/${explorerId}/move/${planetId}`, {
+    method: 'POST',
+  })
+  return res.json()
+}
+
+/*  debug action for sending sunray to planet */
+export async function sendSunray(id: number): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/sunray/${id}`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+/* debug action for sending asteroid to planet */
+export async function sendAsteroid(id: number): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/asteroid/${id}`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(body.error || `HTTP ${res.status}`)
+  }
   return res.json()
 }
