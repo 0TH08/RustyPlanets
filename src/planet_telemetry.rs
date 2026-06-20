@@ -1,15 +1,15 @@
 //! Common trait for planet telemetry across different planet types.
 
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 
-use serde::{Serialize, Deserialize};
-use common_game::components::planet::{Planet, PlanetAI, PlanetState, DummyPlanetState};
-use common_game::components::resource::{Generator, Combinator};
+use common_game::components::planet::{DummyPlanetState, Planet, PlanetAI, PlanetState};
+use common_game::components::resource::{Combinator, Generator};
 use common_game::components::rocket::Rocket;
 use common_game::components::sunray::Sunray;
 use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 use common_game::utils::ID;
+use serde::{Deserialize, Serialize};
 
 /// Common telemetry snapshot for all planet types.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -43,19 +43,19 @@ pub struct GenerationEntry {
 pub trait PlanetTelemetry: Send + Sync {
     /// Returns the current telemetry snapshot.
     fn snapshot(&self) -> CommonPlanetSnapshot;
-    
+
     /// Returns the number of explorers currently present.
     fn explorer_count(&self) -> usize;
-    
+
     /// Returns the number of energy cells.
     fn energy_cells(&self) -> usize;
-    
+
     /// Returns the number of charged energy cells.
     fn charged_cells(&self) -> usize;
-    
+
     /// Returns the state of each energy cell.
     fn cell_states(&self) -> Vec<CellState>;
-    
+
     /// Returns generation history.
     fn generation_history(&self) -> Vec<GenerationEntry>;
 }
@@ -82,22 +82,22 @@ impl PlanetTelemetry for SkycartelTelemetry {
             errors_encountered: state.stats.errors_encountered,
         }
     }
-    
+
     fn explorer_count(&self) -> usize {
         let state = self.state.lock().unwrap();
         state.present_explorers.len()
     }
-    
+
     fn energy_cells(&self) -> usize {
         let state = self.state.lock().unwrap();
         state.total_cells
     }
-    
+
     fn charged_cells(&self) -> usize {
         let state = self.state.lock().unwrap();
         state.charged_cells
     }
-    
+
     fn cell_states(&self) -> Vec<CellState> {
         let state = self.state.lock().unwrap();
         let total = state.total_cells;
@@ -109,12 +109,15 @@ impl PlanetTelemetry for SkycartelTelemetry {
             })
             .collect()
     }
-    
+
     fn generation_history(&self) -> Vec<GenerationEntry> {
         let state = self.state.lock().unwrap();
-        state.generation_history
+        state
+            .generation_history
             .iter()
-            .map(|r| GenerationEntry { resource: format!("{:?}", r) })
+            .map(|r| GenerationEntry {
+                resource: format!("{:?}", r),
+            })
             .collect()
     }
 }
@@ -156,16 +159,27 @@ impl PlanetTelemetry for GenericPlanetTelemetry {
             errors_encountered: s.errors_encountered,
         }
     }
-    fn explorer_count(&self) -> usize { self.stats.lock().unwrap().present_explorers }
-    fn energy_cells(&self) -> usize { self.stats.lock().unwrap().total_cells }
-    fn charged_cells(&self) -> usize { self.stats.lock().unwrap().charged_cells }
+    fn explorer_count(&self) -> usize {
+        self.stats.lock().unwrap().present_explorers
+    }
+    fn energy_cells(&self) -> usize {
+        self.stats.lock().unwrap().total_cells
+    }
+    fn charged_cells(&self) -> usize {
+        self.stats.lock().unwrap().charged_cells
+    }
     fn cell_states(&self) -> Vec<CellState> {
         let s = self.stats.lock().unwrap();
         (0..s.total_cells)
-            .map(|i| CellState { index: i as u8, charged: i < s.charged_cells })
+            .map(|i| CellState {
+                index: i as u8,
+                charged: i < s.charged_cells,
+            })
             .collect()
     }
-    fn generation_history(&self) -> Vec<GenerationEntry> { vec![] }
+    fn generation_history(&self) -> Vec<GenerationEntry> {
+        vec![]
+    }
 }
 
 /// Wraps any [PlanetAI] and intercepts calls to populate [SharedPlanetStats].
@@ -175,14 +189,25 @@ pub struct StatsTrackingAI {
 }
 
 impl PlanetAI for StatsTrackingAI {
-    fn handle_sunray(&mut self, state: &mut PlanetState, gen: &Generator, comb: &Combinator, sunray: Sunray) {
+    fn handle_sunray(
+        &mut self,
+        state: &mut PlanetState,
+        gen: &Generator,
+        comb: &Combinator,
+        sunray: Sunray,
+    ) {
         self.inner.handle_sunray(state, gen, comb, sunray);
         let mut s = self.stats.lock().unwrap();
         s.total_cells = state.cells_iter().count();
         s.charged_cells = state.cells_iter().filter(|c| c.is_charged()).count();
     }
 
-    fn handle_asteroid(&mut self, state: &mut PlanetState, gen: &Generator, comb: &Combinator) -> Option<Rocket> {
+    fn handle_asteroid(
+        &mut self,
+        state: &mut PlanetState,
+        gen: &Generator,
+        comb: &Combinator,
+    ) -> Option<Rocket> {
         let rocket = self.inner.handle_asteroid(state, gen, comb);
         if rocket.is_some() {
             let mut s = self.stats.lock().unwrap();
@@ -192,11 +217,22 @@ impl PlanetAI for StatsTrackingAI {
         rocket
     }
 
-    fn handle_internal_state_req(&mut self, state: &mut PlanetState, gen: &Generator, comb: &Combinator) -> DummyPlanetState {
+    fn handle_internal_state_req(
+        &mut self,
+        state: &mut PlanetState,
+        gen: &Generator,
+        comb: &Combinator,
+    ) -> DummyPlanetState {
         self.inner.handle_internal_state_req(state, gen, comb)
     }
 
-    fn handle_explorer_msg(&mut self, state: &mut PlanetState, gen: &Generator, comb: &Combinator, msg: ExplorerToPlanet) -> Option<PlanetToExplorer> {
+    fn handle_explorer_msg(
+        &mut self,
+        state: &mut PlanetState,
+        gen: &Generator,
+        comb: &Combinator,
+        msg: ExplorerToPlanet,
+    ) -> Option<PlanetToExplorer> {
         let is_generate = matches!(msg, ExplorerToPlanet::GenerateResourceRequest { .. });
         let is_combine = matches!(msg, ExplorerToPlanet::CombineResourceRequest { .. });
         let response = self.inner.handle_explorer_msg(state, gen, comb, msg);
@@ -218,22 +254,36 @@ impl PlanetAI for StatsTrackingAI {
         response
     }
 
-    fn on_explorer_arrival(&mut self, state: &mut PlanetState, gen: &Generator, comb: &Combinator, explorer_id: ID) {
+    fn on_explorer_arrival(
+        &mut self,
+        state: &mut PlanetState,
+        gen: &Generator,
+        comb: &Combinator,
+        explorer_id: ID,
+    ) {
         {
             let mut s = self.stats.lock().unwrap();
             s.explorer_arrivals += 1;
             s.present_explorers += 1;
         }
-        self.inner.on_explorer_arrival(state, gen, comb, explorer_id);
+        self.inner
+            .on_explorer_arrival(state, gen, comb, explorer_id);
     }
 
-    fn on_explorer_departure(&mut self, state: &mut PlanetState, gen: &Generator, comb: &Combinator, explorer_id: ID) {
+    fn on_explorer_departure(
+        &mut self,
+        state: &mut PlanetState,
+        gen: &Generator,
+        comb: &Combinator,
+        explorer_id: ID,
+    ) {
         {
             let mut s = self.stats.lock().unwrap();
             s.explorer_departures += 1;
             s.present_explorers = s.present_explorers.saturating_sub(1);
         }
-        self.inner.on_explorer_departure(state, gen, comb, explorer_id);
+        self.inner
+            .on_explorer_departure(state, gen, comb, explorer_id);
     }
 
     fn on_start(&mut self, state: &PlanetState, gen: &Generator, comb: &Combinator) {
@@ -255,18 +305,37 @@ pub fn wrap_planet_ai(planet: &mut Planet, stats: Arc<Mutex<SharedPlanetStats>>)
         fn handle_sunray(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator, _: Sunray) {
             unreachable!("PlaceholderAI must not be invoked");
         }
-        fn handle_asteroid(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator) -> Option<Rocket> {
+        fn handle_asteroid(
+            &mut self,
+            _: &mut PlanetState,
+            _: &Generator,
+            _: &Combinator,
+        ) -> Option<Rocket> {
             unreachable!("PlaceholderAI must not be invoked");
         }
-        fn handle_internal_state_req(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator) -> DummyPlanetState {
+        fn handle_internal_state_req(
+            &mut self,
+            _: &mut PlanetState,
+            _: &Generator,
+            _: &Combinator,
+        ) -> DummyPlanetState {
             unreachable!("PlaceholderAI must not be invoked");
         }
-        fn handle_explorer_msg(&mut self, _: &mut PlanetState, _: &Generator, _: &Combinator, _: ExplorerToPlanet) -> Option<PlanetToExplorer> {
+        fn handle_explorer_msg(
+            &mut self,
+            _: &mut PlanetState,
+            _: &Generator,
+            _: &Combinator,
+            _: ExplorerToPlanet,
+        ) -> Option<PlanetToExplorer> {
             unreachable!("PlaceholderAI must not be invoked");
         }
     }
 
     let original = std::mem::replace(&mut planet.ai, Box::new(PlaceholderAI));
-    let wrapped = StatsTrackingAI { inner: original, stats };
+    let wrapped = StatsTrackingAI {
+        inner: original,
+        stats,
+    };
     planet.ai = Box::new(wrapped);
 }

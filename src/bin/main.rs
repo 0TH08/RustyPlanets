@@ -18,13 +18,17 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 use skycartel::broadcast_log::{BroadcastLogger, LogEntry};
-use skycartel::common_game::protocols::orchestrator_explorer::{ExplorerToOrchestrator, OrchestratorToExplorer};
-use skycartel::common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
+use skycartel::common_game::protocols::orchestrator_explorer::{
+    ExplorerToOrchestrator, OrchestratorToExplorer,
+};
+use skycartel::common_game::protocols::orchestrator_planet::{
+    OrchestratorToPlanet, PlanetToOrchestrator,
+};
 use skycartel::common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
-use skycartel::orchestrator::{GuiCommand, Orchestrator, StopHandle};
 use skycartel::create_planet;
 use skycartel::create_planet_with_telemetry;
 use skycartel::explorer::{Bag, Explorer};
+use skycartel::orchestrator::{GuiCommand, Orchestrator, StopHandle};
 use skycartel::planet_telemetry::{CellState, GenerationEntry};
 use skycartel::telemetry::{ExplorerTelemetry, PlanetEntry, PlanetKind, RunState, TelemetryHub};
 use skycartel::PlanetType;
@@ -173,12 +177,18 @@ async fn reset_simulation(State(state): State<AppState>) -> Json<StatusResponse>
 
 async fn send_sunray(State(state): State<AppState>, Path(id): Path<u32>) -> Json<SimpleStatus> {
     let _ = state.gui_tx.send(GuiCommand::SendSunray { planet_id: id });
-    Json(SimpleStatus { status: "ok".to_string() })
+    Json(SimpleStatus {
+        status: "ok".to_string(),
+    })
 }
 
 async fn send_asteroid(State(state): State<AppState>, Path(id): Path<u32>) -> Json<SimpleStatus> {
-    let _ = state.gui_tx.send(GuiCommand::SendAsteroid { planet_id: id });
-    Json(SimpleStatus { status: "ok".to_string() })
+    let _ = state
+        .gui_tx
+        .send(GuiCommand::SendAsteroid { planet_id: id });
+    Json(SimpleStatus {
+        status: "ok".to_string(),
+    })
 }
 
 async fn list_planets(State(state): State<AppState>) -> Json<Vec<PlanetSummary>> {
@@ -260,40 +270,121 @@ async fn start_planet(
     State(state): State<AppState>,
     Path(id): Path<u32>,
 ) -> Result<Json<SimpleStatus>, (StatusCode, Json<ErrorBody>)> {
-    state.gui_tx
+    state
+        .gui_tx
         .send(GuiCommand::StartPlanet { planet_id: id })
         .map_err(|_| {
-            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorBody { error: "Orchestrator is not running".into() }))
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorBody {
+                    error: "Orchestrator is not running".into(),
+                }),
+            )
         })?;
-    Ok(Json(SimpleStatus { status: "ok".to_string() }))
+    Ok(Json(SimpleStatus {
+        status: "ok".to_string(),
+    }))
 }
 
 async fn stop_planet(
     State(state): State<AppState>,
     Path(id): Path<u32>,
 ) -> Result<Json<SimpleStatus>, (StatusCode, Json<ErrorBody>)> {
-    state.gui_tx
+    state
+        .gui_tx
         .send(GuiCommand::StopPlanet { planet_id: id })
         .map_err(|_| {
-            (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorBody { error: "Orchestrator is not running".into() }))
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorBody {
+                    error: "Orchestrator is not running".into(),
+                }),
+            )
         })?;
-    Ok(Json(SimpleStatus { status: "ok".to_string() }))
+    Ok(Json(SimpleStatus {
+        status: "ok".to_string(),
+    }))
 }
 
 async fn move_explorer(
     State(state): State<AppState>,
     Path((explorer_id, planet_id)): Path<(u32, u32)>,
-) -> Json<SimpleStatus> {
-    let _ = state.gui_tx.send(GuiCommand::MoveExplorer { explorer_id, dst_planet_id: planet_id });
-    Json(SimpleStatus { status: "ok".to_string() })
-}
+) -> Result<Json<SimpleStatus>, (StatusCode, Json<ErrorBody>)> {
+    let current_planet = state
+        .telemetry
+        .explorer_planet
+        .read()
+        .unwrap()
+        .get(&explorer_id)
+        .copied()
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorBody {
+                    error: format!("Explorer {explorer_id} was not found"),
+                }),
+            )
+        })?;
 
+    let is_neighbor = state
+        .topology
+        .get(&current_planet)
+        .is_some_and(|neighbors| neighbors.contains(&planet_id));
+
+    if !is_neighbor {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorBody {
+                error: format!("Planet {planet_id} is not connected to Planet {current_planet}"),
+            }),
+        ));
+    }
+
+    state
+        .gui_tx
+        .send(GuiCommand::MoveExplorer {
+            explorer_id,
+            dst_planet_id: planet_id,
+        })
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorBody {
+                    error: "Orchestrator is not running".into(),
+                }),
+            )
+        })?;
+
+    // The documented API is synchronous: wait until movement is complete.
+    for _ in 0..100 {
+        let arrived = state
+            .telemetry
+            .explorer_planet
+            .read()
+            .unwrap()
+            .get(&explorer_id)
+            .copied()
+            == Some(planet_id);
+
+        if arrived {
+            return Ok(Json(SimpleStatus {
+                status: "ok".to_string(),
+            }));
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    Err((
+        StatusCode::GATEWAY_TIMEOUT,
+        Json(ErrorBody {
+            error: format!("Explorer {explorer_id} did not reach Planet {planet_id}"),
+        }),
+    ))
+}
 // ── WebSocket log stream ──────────────────────────────────────────────
 
-async fn ws_logs(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn ws_logs(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_logs_ws(socket, state.log_tx.subscribe()))
 }
 
@@ -301,7 +392,9 @@ async fn handle_logs_ws(mut socket: WebSocket, mut rx: broadcast::Receiver<LogEn
     loop {
         match rx.recv().await {
             Ok(entry) => {
-                let Ok(json) = serde_json::to_string(&entry) else { continue };
+                let Ok(json) = serde_json::to_string(&entry) else {
+                    continue;
+                };
                 if socket.send(Message::Text(json)).await.is_err() {
                     break;
                 }
@@ -394,14 +487,54 @@ struct PlanetConfig {
 }
 
 const PLANET_CONFIGS: &[PlanetConfig] = &[
-    PlanetConfig { name: "Skycartel", id: 1, kind: PlanetType::Skycartel, telemetry_kind: PlanetKind::Skycartel },
-    PlanetConfig { name: "Luna4", id: 2, kind: PlanetType::Luna4, telemetry_kind: PlanetKind::Luna4 },
-    PlanetConfig { name: "BlackAdidasShoe", id: 3, kind: PlanetType::BlackAdidasShoe, telemetry_kind: PlanetKind::BlackAdidasShoe },
-    PlanetConfig { name: "ImmutableCosmicBorrow", id: 4, kind: PlanetType::ImmutableCosmicBorrow, telemetry_kind: PlanetKind::ImmutableCosmicBorrow },
-    PlanetConfig { name: "RustEze", id: 5, kind: PlanetType::Rusteze, telemetry_kind: PlanetKind::Rusteze },
-    PlanetConfig { name: "Crabtorio", id: 6, kind: PlanetType::Crabtorio, telemetry_kind: PlanetKind::Crabtorio },
-    PlanetConfig { name: "Orbitron", id: 7, kind: PlanetType::Orbitron, telemetry_kind: PlanetKind::Orbitron },
-    PlanetConfig { name: "AstroParrot", id: 8, kind: PlanetType::AstroParrot, telemetry_kind: PlanetKind::AstroParrot },
+    PlanetConfig {
+        name: "Skycartel",
+        id: 1,
+        kind: PlanetType::Skycartel,
+        telemetry_kind: PlanetKind::Skycartel,
+    },
+    PlanetConfig {
+        name: "Luna4",
+        id: 2,
+        kind: PlanetType::Luna4,
+        telemetry_kind: PlanetKind::Luna4,
+    },
+    PlanetConfig {
+        name: "BlackAdidasShoe",
+        id: 3,
+        kind: PlanetType::BlackAdidasShoe,
+        telemetry_kind: PlanetKind::BlackAdidasShoe,
+    },
+    PlanetConfig {
+        name: "ImmutableCosmicBorrow",
+        id: 4,
+        kind: PlanetType::ImmutableCosmicBorrow,
+        telemetry_kind: PlanetKind::ImmutableCosmicBorrow,
+    },
+    PlanetConfig {
+        name: "RustEze",
+        id: 5,
+        kind: PlanetType::Rusteze,
+        telemetry_kind: PlanetKind::Rusteze,
+    },
+    PlanetConfig {
+        name: "Crabtorio",
+        id: 6,
+        kind: PlanetType::Crabtorio,
+        telemetry_kind: PlanetKind::Crabtorio,
+    },
+    PlanetConfig {
+        name: "Orbitron",
+        id: 7,
+        kind: PlanetType::Orbitron,
+        telemetry_kind: PlanetKind::Orbitron,
+    },
+    PlanetConfig {
+        name: "AstroParrot",
+        id: 8,
+        kind: PlanetType::AstroParrot,
+        telemetry_kind: PlanetKind::AstroParrot,
+    },
 ];
 
 fn load_topology(path: &str) -> HashMap<u32, Vec<u32>> {
@@ -418,7 +551,9 @@ fn load_topology(path: &str) -> HashMap<u32, Vec<u32>> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let mut parts = line.split_whitespace().filter_map(|t| t.parse::<u32>().ok());
+        let mut parts = line
+            .split_whitespace()
+            .filter_map(|t| t.parse::<u32>().ok());
         if let Some(src) = parts.next() {
             let neighbors: Vec<u32> = parts.collect();
             map.insert(src, neighbors);
@@ -441,7 +576,8 @@ fn main() {
     let mut explorer_senders: HashMap<u32, Sender<OrchestratorToExplorer>> = HashMap::new();
 
     // Bug A fix: one shared channel so all planets send to one orchestrator receiver
-    let (planet_to_orch_tx, planet_to_orch_rx) = crossbeam_channel::unbounded::<PlanetToOrchestrator>();
+    let (planet_to_orch_tx, planet_to_orch_rx) =
+        crossbeam_channel::unbounded::<PlanetToOrchestrator>();
 
     // Create planets
     for config in PLANET_CONFIGS {
@@ -480,7 +616,10 @@ fn main() {
                 // Fallback: create planet without telemetry
                 let result = create_planet(config.id, config.kind, orx_clone, ptx_clone, erx_clone);
                 if let Ok(mut planet) = result {
-                    println!("Created planet {} (id={}, no telemetry)", config.name, config.id);
+                    println!(
+                        "Created planet {} (id={}, no telemetry)",
+                        config.name, config.id
+                    );
                     thread::spawn(move || {
                         planet.run().ok();
                     });
@@ -505,7 +644,8 @@ fn main() {
     }
 
     // Shared channel: all explorers report back through one receiver (Bug B fix: receiver passed to Orchestrator below)
-    let (exp_to_orch_tx, exp_to_orch_rx) = crossbeam_channel::unbounded::<ExplorerToOrchestrator<Bag>>();
+    let (exp_to_orch_tx, exp_to_orch_rx) =
+        crossbeam_channel::unbounded::<ExplorerToOrchestrator<Bag>>();
     let mut explorer_reply_senders: HashMap<u32, Sender<PlanetToExplorer>> = HashMap::new();
 
     // Create explorers
@@ -534,10 +674,7 @@ fn main() {
         explorer_senders.insert(explorer_id, orch_to_exp_tx);
     }
 
-    println!(
-        "Ready: {} planets, 2 explorers",
-        PLANET_CONFIGS.len()
-    );
+    println!("Ready: {} planets, 2 explorers", PLANET_CONFIGS.len());
 
     // Load galaxy topology from file; keep an Arc for the API server
     let topology = Arc::new(load_topology("galaxy.txt"));
@@ -545,18 +682,20 @@ fn main() {
     // Bug B/C fix: create and run the Orchestrator with all wired channels.
     // All GUI-triggered actions (sunray, asteroid, start/stop planet, move explorer)
     // go through gui_tx so the Orchestrator remains the single coordinator.
-    let stop_handle = Arc::new(Orchestrator::new(
-        planet_senders.clone(),
-        planet_explorer_senders.clone(),
-        planet_to_orch_rx,
-        explorer_senders.clone(),
-        exp_to_orch_rx,
-    )
-    .expect("Failed to create orchestrator")
-    .with_explorer_reply_senders(explorer_reply_senders)
-    .with_topology((*topology).clone())
-    .with_telemetry(telemetry.clone())
-    .run());
+    let stop_handle = Arc::new(
+        Orchestrator::new(
+            planet_senders.clone(),
+            planet_explorer_senders.clone(),
+            planet_to_orch_rx,
+            explorer_senders.clone(),
+            exp_to_orch_rx,
+        )
+        .expect("Failed to create orchestrator")
+        .with_explorer_reply_senders(explorer_reply_senders)
+        .with_topology((*topology).clone())
+        .with_telemetry(telemetry.clone())
+        .run(),
+    );
     let gui_tx = stop_handle.gui_tx.clone();
 
     // Start GUI server with graceful shutdown on Ctrl+C

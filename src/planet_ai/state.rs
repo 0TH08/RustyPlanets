@@ -21,7 +21,7 @@ pub struct SkycartelState {
 
     pub generation_history: Vec<BasicResourceType>,
     pub present_explorers: HashMap<u32, Instant>,
-    
+
     pub total_cells: usize,
     pub charged_cells: usize,
 
@@ -42,7 +42,7 @@ impl SkycartelState {
             stats: OperationalStats::new(),
         }
     }
-    
+
     pub(crate) fn update_cells(&mut self, total: usize, charged: usize) {
         self.total_cells = total;
         self.charged_cells = charged;

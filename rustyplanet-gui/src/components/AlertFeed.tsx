@@ -17,7 +17,6 @@ interface SeverityDetails {
   iconAnimation?: string;
 }
 
-// Keyframes for smooth transitions
 const slideIn = keyframes`
   0% {
     transform: translateX(120%) scale(0.9);
@@ -50,7 +49,6 @@ const slideOut = keyframes`
     padding-top: 0;
     padding-bottom: 0;
     border-width: 0;
-    opacity: 0;
   }
 `;
 
@@ -70,31 +68,31 @@ const rotate = keyframes`
   to { transform: rotate(360deg); }
 `;
 
-// Glassmorphism alert card
 const AlertCard = styled(Box, {
-  shouldForwardProp: (prop) => prop !== "severityColor" && prop !== "isClosing" && prop !== "glowColor",
+  shouldForwardProp: (prop) =>
+      prop !== "severityColor" && prop !== "isClosing" && prop !== "glowColor",
 })<{ severityColor: string; glowColor: string; isClosing: boolean }>(
-  ({ severityColor, glowColor, isClosing }) => ({
-    display: "flex",
-    alignItems: "flex-start",
-    gap: "14px",
-    padding: "14px 18px",
-    borderRadius: "14px",
-    background: "linear-gradient(135deg, rgba(11, 15, 28, 0.82) 0%, rgba(20, 27, 45, 0.72) 100%)",
-    backdropFilter: "blur(20px) saturate(160%)",
-    border: "1px solid rgba(255, 255, 255, 0.07)",
-    borderLeft: `4px solid ${severityColor}`,
-    boxShadow: `0 12px 40px -6px rgba(0, 0, 0, 0.6), 0 0 20px -2px ${glowColor}, inset 0 1px 0 rgba(255, 255, 255, 0.1)`,
-    color: "#fff",
-    transition: "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
-    animation: `${isClosing ? slideOut : slideIn} 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards`,
-    overflow: "hidden",
-    pointerEvents: "auto",
-    width: "100%",
-  })
+    ({ severityColor, glowColor, isClosing }) => ({
+      display: "flex",
+      alignItems: "flex-start",
+      gap: "14px",
+      padding: "14px 18px",
+      borderRadius: "14px",
+      background:
+          "linear-gradient(135deg, rgba(11, 15, 28, 0.82) 0%, rgba(20, 27, 45, 0.72) 100%)",
+      backdropFilter: "blur(20px) saturate(160%)",
+      border: "1px solid rgba(255, 255, 255, 0.07)",
+      borderLeft: `4px solid ${severityColor}`,
+      boxShadow: `0 12px 40px -6px rgba(0, 0, 0, 0.6), 0 0 20px -2px ${glowColor}, inset 0 1px 0 rgba(255, 255, 255, 0.1)`,
+      color: "#fff",
+      transition: "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
+      animation: `${isClosing ? slideOut : slideIn} 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards`,
+      overflow: "hidden",
+      pointerEvents: "auto",
+      width: "100%",
+    })
 );
 
-// Styled icon wrapper
 const IconBox = styled(Box, {
   shouldForwardProp: (prop) => prop !== "accentColor" && prop !== "anim",
 })<{ accentColor: string; anim?: string }>(({ accentColor, anim }) => ({
@@ -114,7 +112,11 @@ const IconBox = styled(Box, {
 function getSeverityDetails(message: string): SeverityDetails {
   const msg = message.toLowerCase();
 
-  if (msg.includes("hit by an asteroid") || msg.includes("destroyed") || msg.includes("killed")) {
+  if (
+      msg.includes("hit by an asteroid") ||
+      msg.includes("destroyed") ||
+      msg.includes("killed")
+  ) {
     return {
       severity: "error",
       color: "#ef4444",
@@ -124,6 +126,7 @@ function getSeverityDetails(message: string): SeverityDetails {
       iconAnimation: `${pulse} 2s infinite ease-in-out`,
     };
   }
+
   if (msg.includes("deflected")) {
     return {
       severity: "success",
@@ -133,6 +136,7 @@ function getSeverityDetails(message: string): SeverityDetails {
       title: "DEFENSE ENGAGED",
     };
   }
+
   if (msg.includes("crafted")) {
     return {
       severity: "info",
@@ -142,7 +146,12 @@ function getSeverityDetails(message: string): SeverityDetails {
       title: "RESOURCE SYNTHESIS",
     };
   }
-  if (msg.includes("moved to") || msg.includes("arrived") || msg.includes("left")) {
+
+  if (
+      msg.includes("moved to") ||
+      msg.includes("arrived") ||
+      msg.includes("left")
+  ) {
     return {
       severity: "info",
       color: "#3b82f6",
@@ -151,7 +160,12 @@ function getSeverityDetails(message: string): SeverityDetails {
       title: "COSMIC DEPARTURE",
     };
   }
-  if (msg.includes("ai started") || msg.includes("ai stopped") || msg.includes("resetting")) {
+
+  if (
+      msg.includes("ai started") ||
+      msg.includes("ai stopped") ||
+      msg.includes("resetting")
+  ) {
     return {
       severity: "warning",
       color: "#f59e0b",
@@ -161,6 +175,7 @@ function getSeverityDetails(message: string): SeverityDetails {
       iconAnimation: `${rotate} 6s linear infinite`,
     };
   }
+
   return {
     severity: "info",
     color: "#6366f1",
@@ -170,7 +185,6 @@ function getSeverityDetails(message: string): SeverityDetails {
   };
 }
 
-// Convert Hex colors to RGB values for transparent backgrounds
 const RGB_ACCENTS = {
   "#ef4444": "239, 68, 68",
   "#10b981": "16, 185, 129",
@@ -183,91 +197,110 @@ const RGB_ACCENTS = {
 export function AlertFeed() {
   const { logs } = useLogStore();
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
-  const lastProcessedIdRef = useRef<string | null>(null);
+  const lastProcessedIdRef = useRef<string | number | null>(null);
+  const timersRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, []);
 
   useEffect(() => {
     if (logs.length === 0) return;
+
     const latest = logs[logs.length - 1];
+    if (latest.id === lastProcessedIdRef.current) return;
 
-    // Check if this log is new and player-facing
-    if (latest.id !== lastProcessedIdRef.current) {
-      lastProcessedIdRef.current = latest.id;
+    lastProcessedIdRef.current = latest.id;
 
-      if (latest.player) {
-        setTimeout(() => {
-          const newItem: AlertItem = { log: latest, isClosing: false };
-          setAlerts((prev) => [...prev, newItem].slice(-4));
+    const details = getSeverityDetails(latest.message);
+    const shouldShowPopup =
+        latest.player &&
+        (latest.level === "error" ||
+            latest.level === "warn" ||
+            details.severity === "error");
 
-          // Step 1: Trigger exit slide out (isClosing = true) after 3.5 seconds
-          setTimeout(() => {
-            setAlerts((prev) =>
-              prev.map((a) => (a.log.id === latest.id ? { ...a, isClosing: true } : a))
-            );
-          }, 3500);
+    if (!shouldShowPopup) return;
 
-          // Step 2: Fully remove item from state after exit animation finishes (4.0 seconds)
-          setTimeout(() => {
-            setAlerts((prev) => prev.filter((a) => a.log.id !== latest.id));
-          }, 4000);
-        }, 0);
-      }
-    }
+    const newItem: AlertItem = { log: latest, isClosing: false };
+    setAlerts((previous) => [...previous, newItem].slice(-4));
+
+    const closeTimer = window.setTimeout(() => {
+      setAlerts((previous) =>
+          previous.map((alert) =>
+              alert.log.id === latest.id ? { ...alert, isClosing: true } : alert
+          )
+      );
+    }, 3500);
+
+    const removeTimer = window.setTimeout(() => {
+      setAlerts((previous) =>
+          previous.filter((alert) => alert.log.id !== latest.id)
+      );
+    }, 4000);
+
+    timersRef.current.push(closeTimer, removeTimer);
   }, [logs]);
 
   return (
-    <Box
-      sx={{
-        position: "fixed",
-        top: 88,
-        right: 24,
-        zIndex: 1600,
-        width: 360,
-        pointerEvents: "none",
-      }}
-    >
-      <Stack spacing={1.5}>
-        {alerts.map((item) => {
-          const details = getSeverityDetails(item.log.message);
-          const rgbAccent = RGB_ACCENTS[details.color as keyof typeof RGB_ACCENTS] || "99, 102, 241";
+      <Box
+          sx={{
+            position: "fixed",
+            top: 88,
+            right: 24,
+            zIndex: 1600,
+            width: 360,
+            pointerEvents: "none",
+          }}
+      >
+        <Stack spacing={1.5}>
+          {alerts.map((item) => {
+            const details = getSeverityDetails(item.log.message);
+            const rgbAccent =
+                RGB_ACCENTS[details.color as keyof typeof RGB_ACCENTS] ||
+                "99, 102, 241";
 
-          return (
-            <AlertCard
-              key={item.log.id}
-              severityColor={details.color}
-              glowColor={details.glow}
-              isClosing={item.isClosing}
-            >
-              <IconBox accentColor={rgbAccent} anim={details.iconAnimation}>
-                {details.icon}
-              </IconBox>
-              <Box sx={{ flexGrow: 1 }}>
-                <Typography
-                  sx={{
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    letterSpacing: "0.1em",
-                    color: details.color,
-                    textTransform: "uppercase",
-                    mb: 0.25,
-                  }}
+            return (
+                <AlertCard
+                    key={item.log.id}
+                    severityColor={details.color}
+                    glowColor={details.glow}
+                    isClosing={item.isClosing}
                 >
-                  {details.title}
-                </Typography>
-                <Typography
-                  sx={{
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    color: "#f3f4f6",
-                    lineHeight: 1.4,
-                  }}
-                >
-                  {item.log.message}
-                </Typography>
-              </Box>
-            </AlertCard>
-          );
-        })}
-      </Stack>
-    </Box>
+                  <IconBox accentColor={rgbAccent} anim={details.iconAnimation}>
+                    {details.icon}
+                  </IconBox>
+
+                  <Box sx={{ flexGrow: 1 }}>
+                    <Typography
+                        sx={{
+                          fontSize: "10px",
+                          fontWeight: 700,
+                          letterSpacing: "0.1em",
+                          color: details.color,
+                          textTransform: "uppercase",
+                          mb: 0.25,
+                        }}
+                    >
+                      {details.title}
+                    </Typography>
+
+                    <Typography
+                        sx={{
+                          fontSize: "12px",
+                          fontWeight: 500,
+                          color: "#f3f4f6",
+                          lineHeight: 1.4,
+                        }}
+                    >
+                      {item.log.message}
+                    </Typography>
+                  </Box>
+                </AlertCard>
+            );
+          })}
+        </Stack>
+      </Box>
   );
 }

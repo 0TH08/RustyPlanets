@@ -1,13 +1,13 @@
 // src/lib.rs
 //! Skycartel planet crate (RustyPlanet implementation)
 
+pub mod broadcast_log;
+pub mod explorer;
 pub mod logging;
 pub mod orchestrator;
 pub mod planet_ai;
-pub mod explorer;
-pub mod telemetry;
 pub mod planet_telemetry;
-pub mod broadcast_log;
+pub mod telemetry;
 #[cfg(test)]
 mod tests;
 
@@ -71,11 +71,13 @@ pub fn create_planet(
             luna4::create_planet(id, rx_orchestrator, tx_orchestrator, rx_explorer)
                 .map_err(|e| format!("Luna4: {e}"))?
         }
-        PlanetType::BlackAdidasShoe => {
-            black_adidas_shoe::planet::create_planet(
-                rx_orchestrator, tx_orchestrator, rx_explorer, id,
-            ).map_err(|e| format!("BlackAdidasShoe: {e}"))?
-        }
+        PlanetType::BlackAdidasShoe => black_adidas_shoe::planet::create_planet(
+            rx_orchestrator,
+            tx_orchestrator,
+            rx_explorer,
+            id,
+        )
+        .map_err(|e| format!("BlackAdidasShoe: {e}"))?,
         PlanetType::ImmutableCosmicBorrow => {
             use std::time::Duration;
             immutable_cosmic_borrow::create_planet(
@@ -87,7 +89,8 @@ pub fn create_planet(
                 id,
                 (rx_orchestrator, tx_orchestrator),
                 rx_explorer,
-            ).map_err(|e| format!("ImmutableCosmicBorrow: {e}"))?
+            )
+            .map_err(|e| format!("ImmutableCosmicBorrow: {e}"))?
         }
         PlanetType::Rusteze => {
             // pub-rust-eze panics internally on error, returns Planet directly
@@ -164,7 +167,8 @@ pub fn create_planet_with_telemetry(
         None::<[(&str, String); 0]>,
     );
 
-    let (planet, telemetry_obj): (_, Box<dyn planet_telemetry::PlanetTelemetry>) = match planet_type {
+    let (planet, telemetry_obj): (_, Box<dyn planet_telemetry::PlanetTelemetry>) = match planet_type
+    {
         PlanetType::Skycartel => {
             let planet_impl = RustyPlanet::new(id)
                 .map_err(|e| format!("Failed to create Skycartel planet handle: {e}"))?;
@@ -180,12 +184,21 @@ pub fn create_planet_with_telemetry(
         // External planets don't expose native telemetry hooks, so we wrap the AI with
         // StatsTrackingAI to populate SharedPlanetStats from every AI method call.
         _ => {
-            let mut planet = create_planet(id, planet_type, rx_orchestrator, tx_orchestrator, rx_explorer)?;
+            let mut planet = create_planet(
+                id,
+                planet_type,
+                rx_orchestrator,
+                tx_orchestrator,
+                rx_explorer,
+            )?;
             let stats = std::sync::Arc::new(std::sync::Mutex::new(
                 planet_telemetry::SharedPlanetStats::default(),
             ));
             planet_telemetry::wrap_planet_ai(&mut planet, stats.clone());
-            (planet, Box::new(planet_telemetry::GenericPlanetTelemetry { stats }))
+            (
+                planet,
+                Box::new(planet_telemetry::GenericPlanetTelemetry { stats }),
+            )
         }
     };
 

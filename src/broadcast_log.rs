@@ -48,7 +48,9 @@ impl BroadcastLogger {
     ///
     /// Returns a sender that can be cloned to produce subscribers, and a
     /// receiver for the initial subscriber.
-    pub fn init() -> Result<(broadcast::Sender<LogEntry>, broadcast::Receiver<LogEntry>), log::SetLoggerError> {
+    pub fn init(
+    ) -> Result<(broadcast::Sender<LogEntry>, broadcast::Receiver<LogEntry>), log::SetLoggerError>
+    {
         let (sender, _) = broadcast::channel::<LogEntry>(1024);
         let receiver = sender.subscribe();
 

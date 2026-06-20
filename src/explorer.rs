@@ -1,18 +1,20 @@
 use crate::player_log;
-use std::thread::{self, JoinHandle};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
-use common_game::protocols::orchestrator_explorer::{OrchestratorToExplorer, ExplorerToOrchestrator};
-use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
-use crossbeam_channel::{Sender, Receiver, RecvTimeoutError};
 use common_game::components::resource::{
     BasicResource, BasicResourceType, ComplexResource, ComplexResourceRequest, ComplexResourceType,
-    GenericResource
+    GenericResource,
 };
+use common_game::protocols::orchestrator_explorer::{
+    ExplorerToOrchestrator, OrchestratorToExplorer,
+};
+use common_game::protocols::planet_explorer::{ExplorerToPlanet, PlanetToExplorer};
 use common_game::utils::ID;
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 pub struct Explorer<T> {
     id: ID,
@@ -89,11 +91,15 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
                         let _ = self.orchestrator_sender.send(response);
                     }
 
-                    OrchestratorToExplorer::MoveToPlanet { sender_to_new_planet, planet_id } => {
+                    OrchestratorToExplorer::MoveToPlanet {
+                        sender_to_new_planet,
+                        planet_id,
+                    } => {
                         // Update shared planet id before notifying AI thread so the AI
                         // reads the correct value as soon as it wakes from planet_rx.
                         self.shared_planet_id.store(planet_id, Ordering::SeqCst);
-                        let response = self.handle_move_to_planet(sender_to_new_planet.clone(), planet_id);
+                        let response =
+                            self.handle_move_to_planet(sender_to_new_planet.clone(), planet_id);
                         // Forward new sender (or None) to the AI thread.
                         if let Some(ref tx) = self.ai_planet_tx {
                             let _ = tx.try_send(sender_to_new_planet);
@@ -145,7 +151,9 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
                     }
 
                     OrchestratorToExplorer::KillExplorer => {
-                        let response = ExplorerToOrchestrator::KillExplorerResult { explorer_id: self.id };
+                        let response = ExplorerToOrchestrator::KillExplorerResult {
+                            explorer_id: self.id,
+                        };
                         let _ = self.orchestrator_sender.send(response);
                         break;
                     }
@@ -158,43 +166,70 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
         self.neighbors = neighbors;
     }
 
-    fn handle_combine_resource_request(&mut self, to_generate: ComplexResourceType) -> ExplorerToOrchestrator<T> {
+    fn handle_combine_resource_request(
+        &mut self,
+        to_generate: ComplexResourceType,
+    ) -> ExplorerToOrchestrator<T> {
         if self.ai_running.load(Ordering::SeqCst) {
             return ExplorerToOrchestrator::CombineResourceResponse {
                 explorer_id: self.id,
-                generated: Err("Explorer AI is running; manual combination not permitted".to_string()),
+                generated: Err(
+                    "Explorer AI is running; manual combination not permitted".to_string()
+                ),
             };
         }
         let req = match to_generate {
-            ComplexResourceType::Water    => self.make_water(),
-            ComplexResourceType::Diamond  => self.make_diamond(),
-            ComplexResourceType::Life     => self.make_life(),
-            ComplexResourceType::Robot    => self.make_robot(),
-            ComplexResourceType::Dolphin  => self.make_dolphin(),
+            ComplexResourceType::Water => self.make_water(),
+            ComplexResourceType::Diamond => self.make_diamond(),
+            ComplexResourceType::Life => self.make_life(),
+            ComplexResourceType::Robot => self.make_robot(),
+            ComplexResourceType::Dolphin => self.make_dolphin(),
             ComplexResourceType::AIPartner => self.make_aipartner(),
         };
 
         let req = match req {
-            None => return ExplorerToOrchestrator::CombineResourceResponse {
-                explorer_id: self.id,
-                generated: Err("Not enough resources in bag".to_string()),
-            },
+            None => {
+                return ExplorerToOrchestrator::CombineResourceResponse {
+                    explorer_id: self.id,
+                    generated: Err("Not enough resources in bag".to_string()),
+                }
+            }
             Some(r) => r,
         };
 
-        let msg = ExplorerToPlanet::CombineResourceRequest { explorer_id: self.id, msg: req };
+        let msg = ExplorerToPlanet::CombineResourceRequest {
+            explorer_id: self.id,
+            msg: req,
+        };
         let _ = self.planet_sender.send(msg);
 
-        if let Ok(PlanetToExplorer::CombineResourceResponse { complex_response }) = self.planet_receiver.recv() {
+        if let Ok(PlanetToExplorer::CombineResourceResponse { complex_response }) =
+            self.planet_receiver.recv()
+        {
             match complex_response {
                 Ok(cr) => {
-                    self.bag.lock().expect("Bag mutex poisoned").insert_complex_resource_in_bag(cr);
-                    ExplorerToOrchestrator::CombineResourceResponse { explorer_id: self.id, generated: Ok(()) }
+                    self.bag
+                        .lock()
+                        .expect("Bag mutex poisoned")
+                        .insert_complex_resource_in_bag(cr);
+                    ExplorerToOrchestrator::CombineResourceResponse {
+                        explorer_id: self.id,
+                        generated: Ok(()),
+                    }
                 }
                 Err((e, r1, r2)) => {
-                    self.bag.lock().expect("Bag mutex poisoned").restore_resource(r1);
-                    self.bag.lock().expect("Bag mutex poisoned").restore_resource(r2);
-                    ExplorerToOrchestrator::CombineResourceResponse { explorer_id: self.id, generated: Err(e) }
+                    self.bag
+                        .lock()
+                        .expect("Bag mutex poisoned")
+                        .restore_resource(r1);
+                    self.bag
+                        .lock()
+                        .expect("Bag mutex poisoned")
+                        .restore_resource(r2);
+                    ExplorerToOrchestrator::CombineResourceResponse {
+                        explorer_id: self.id,
+                        generated: Err(e),
+                    }
                 }
             }
         } else {
@@ -206,56 +241,135 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
     }
 
     fn make_aipartner(&mut self) -> Option<ComplexResourceRequest> {
-        let r = self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Robot)?;
-        let d = self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Diamond)?;
-        Some(ComplexResourceRequest::AIPartner(r.to_robot().ok()?, d.to_diamond().ok()?))
+        let r = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_complex_resource(ComplexResourceType::Robot)?;
+        let d = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_complex_resource(ComplexResourceType::Diamond)?;
+        Some(ComplexResourceRequest::AIPartner(
+            r.to_robot().ok()?,
+            d.to_diamond().ok()?,
+        ))
     }
 
     fn make_dolphin(&mut self) -> Option<ComplexResourceRequest> {
-        let w = self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Water)?;
-        let l = self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Life)?;
-        Some(ComplexResourceRequest::Dolphin(w.to_water().ok()?, l.to_life().ok()?))
+        let w = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_complex_resource(ComplexResourceType::Water)?;
+        let l = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_complex_resource(ComplexResourceType::Life)?;
+        Some(ComplexResourceRequest::Dolphin(
+            w.to_water().ok()?,
+            l.to_life().ok()?,
+        ))
     }
 
     fn make_robot(&mut self) -> Option<ComplexResourceRequest> {
-        let s = self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Silicon)?;
-        let l = self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Life)?;
-        Some(ComplexResourceRequest::Robot(s.to_silicon().ok()?, l.to_life().ok()?))
+        let s = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_basic_resource(BasicResourceType::Silicon)?;
+        let l = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_complex_resource(ComplexResourceType::Life)?;
+        Some(ComplexResourceRequest::Robot(
+            s.to_silicon().ok()?,
+            l.to_life().ok()?,
+        ))
     }
 
     fn make_life(&mut self) -> Option<ComplexResourceRequest> {
-        let w = self.bag.lock().expect("Bag mutex poisoned").take_complex_resource(ComplexResourceType::Water)?;
-        let c = self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Carbon)?;
-        Some(ComplexResourceRequest::Life(w.to_water().ok()?, c.to_carbon().ok()?))
+        let w = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_complex_resource(ComplexResourceType::Water)?;
+        let c = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_basic_resource(BasicResourceType::Carbon)?;
+        Some(ComplexResourceRequest::Life(
+            w.to_water().ok()?,
+            c.to_carbon().ok()?,
+        ))
     }
 
     fn make_diamond(&mut self) -> Option<ComplexResourceRequest> {
-        let c1 = self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Carbon)?;
-        let c2 = self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Carbon)?;
-        Some(ComplexResourceRequest::Diamond(c1.to_carbon().ok()?, c2.to_carbon().ok()?))
+        let c1 = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_basic_resource(BasicResourceType::Carbon)?;
+        let c2 = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_basic_resource(BasicResourceType::Carbon)?;
+        Some(ComplexResourceRequest::Diamond(
+            c1.to_carbon().ok()?,
+            c2.to_carbon().ok()?,
+        ))
     }
 
     fn make_water(&mut self) -> Option<ComplexResourceRequest> {
-        let h = self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Hydrogen)?;
-        let o = self.bag.lock().expect("Bag mutex poisoned").take_basic_resource(BasicResourceType::Oxygen)?;
-        Some(ComplexResourceRequest::Water(h.to_hydrogen().ok()?, o.to_oxygen().ok()?))
+        let h = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_basic_resource(BasicResourceType::Hydrogen)?;
+        let o = self
+            .bag
+            .lock()
+            .expect("Bag mutex poisoned")
+            .take_basic_resource(BasicResourceType::Oxygen)?;
+        Some(ComplexResourceRequest::Water(
+            h.to_hydrogen().ok()?,
+            o.to_oxygen().ok()?,
+        ))
     }
 
-    fn handle_generate_resource_request(&mut self, to_generate: BasicResourceType) -> ExplorerToOrchestrator<T> {
+    fn handle_generate_resource_request(
+        &mut self,
+        to_generate: BasicResourceType,
+    ) -> ExplorerToOrchestrator<T> {
         if self.ai_running.load(Ordering::SeqCst) {
             return ExplorerToOrchestrator::GenerateResourceResponse {
                 explorer_id: self.id,
-                generated: Err("Explorer AI is running; manual generation not permitted".to_string()),
+                generated: Err(
+                    "Explorer AI is running; manual generation not permitted".to_string()
+                ),
             };
         }
-        let msg = ExplorerToPlanet::GenerateResourceRequest { explorer_id: self.id, resource: to_generate };
+        let msg = ExplorerToPlanet::GenerateResourceRequest {
+            explorer_id: self.id,
+            resource: to_generate,
+        };
         let _ = self.planet_sender.send(msg);
 
-        if let Ok(PlanetToExplorer::GenerateResourceResponse { resource }) = self.planet_receiver.recv() {
+        if let Ok(PlanetToExplorer::GenerateResourceResponse { resource }) =
+            self.planet_receiver.recv()
+        {
             match resource {
                 Some(r) => {
                     self.bag.lock().unwrap().insert_basic_resource_in_bag(r);
-                    ExplorerToOrchestrator::GenerateResourceResponse { explorer_id: self.id, generated: Ok(()) }
+                    ExplorerToOrchestrator::GenerateResourceResponse {
+                        explorer_id: self.id,
+                        generated: Ok(()),
+                    }
                 }
                 None => ExplorerToOrchestrator::GenerateResourceResponse {
                     explorer_id: self.id,
@@ -277,11 +391,23 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
                 combination_list: HashSet::new(),
             };
         }
-        let _ = self.planet_sender.send(ExplorerToPlanet::SupportedCombinationRequest { explorer_id: self.id });
-        if let Ok(PlanetToExplorer::SupportedCombinationResponse { combination_list }) = self.planet_receiver.recv() {
-            ExplorerToOrchestrator::SupportedCombinationResult { explorer_id: self.id, combination_list }
+        let _ = self
+            .planet_sender
+            .send(ExplorerToPlanet::SupportedCombinationRequest {
+                explorer_id: self.id,
+            });
+        if let Ok(PlanetToExplorer::SupportedCombinationResponse { combination_list }) =
+            self.planet_receiver.recv()
+        {
+            ExplorerToOrchestrator::SupportedCombinationResult {
+                explorer_id: self.id,
+                combination_list,
+            }
         } else {
-            ExplorerToOrchestrator::SupportedCombinationResult { explorer_id: self.id, combination_list: HashSet::new() }
+            ExplorerToOrchestrator::SupportedCombinationResult {
+                explorer_id: self.id,
+                combination_list: HashSet::new(),
+            }
         }
     }
 
@@ -292,11 +418,23 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
                 supported_resources: HashSet::new(),
             };
         }
-        let _ = self.planet_sender.send(ExplorerToPlanet::SupportedResourceRequest { explorer_id: self.id });
-        if let Ok(PlanetToExplorer::SupportedResourceResponse { resource_list }) = self.planet_receiver.recv() {
-            ExplorerToOrchestrator::SupportedResourceResult { explorer_id: self.id, supported_resources: resource_list }
+        let _ = self
+            .planet_sender
+            .send(ExplorerToPlanet::SupportedResourceRequest {
+                explorer_id: self.id,
+            });
+        if let Ok(PlanetToExplorer::SupportedResourceResponse { resource_list }) =
+            self.planet_receiver.recv()
+        {
+            ExplorerToOrchestrator::SupportedResourceResult {
+                explorer_id: self.id,
+                supported_resources: resource_list,
+            }
         } else {
-            ExplorerToOrchestrator::SupportedResourceResult { explorer_id: self.id, supported_resources: HashSet::new() }
+            ExplorerToOrchestrator::SupportedResourceResult {
+                explorer_id: self.id,
+                supported_resources: HashSet::new(),
+            }
         }
     }
 
@@ -311,7 +449,9 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
         self.bag.lock().unwrap().reset();
         self.ai_running.store(true, Ordering::SeqCst);
         self.spawn_ai_thread();
-        ExplorerToOrchestrator::ResetExplorerAIResult { explorer_id: self.id }
+        ExplorerToOrchestrator::ResetExplorerAIResult {
+            explorer_id: self.id,
+        }
     }
 
     fn handle_stop_explorer_ai(&self) -> ExplorerToOrchestrator<T> {
@@ -322,20 +462,28 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
             let _ = h.join();
         }
         player_log!("[Explorer #{}] Stopping autonomous AI", self.id);
-        ExplorerToOrchestrator::StopExplorerAIResult { explorer_id: self.id }
+        ExplorerToOrchestrator::StopExplorerAIResult {
+            explorer_id: self.id,
+        }
     }
 
     fn handle_start_explorer_ai(&mut self) -> ExplorerToOrchestrator<T> {
-        if self.ai_running
+        if self
+            .ai_running
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
             player_log!("[Explorer #{}] Starting autonomous AI", self.id);
             self.spawn_ai_thread();
         } else {
-            log::debug!("[Explorer #{}] AI already running — ignoring start", self.id);
+            log::debug!(
+                "[Explorer #{}] AI already running — ignoring start",
+                self.id
+            );
         }
-        ExplorerToOrchestrator::StartExplorerAIResult { explorer_id: self.id }
+        ExplorerToOrchestrator::StartExplorerAIResult {
+            explorer_id: self.id,
+        }
     }
 
     fn spawn_ai_thread(&mut self) {
@@ -348,7 +496,8 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
         let shared_planet_id = Arc::clone(&self.shared_planet_id);
 
         let (neighbors_tx, neighbors_rx) = crossbeam_channel::unbounded::<Vec<ID>>();
-        let (planet_tx, planet_rx) = crossbeam_channel::unbounded::<Option<Sender<ExplorerToPlanet>>>();
+        let (planet_tx, planet_rx) =
+            crossbeam_channel::unbounded::<Option<Sender<ExplorerToPlanet>>>();
 
         self.ai_neighbors_tx = Some(neighbors_tx);
         self.ai_planet_tx = Some(planet_tx);
@@ -380,11 +529,17 @@ impl<T: From<BagSummary> + Send + 'static> Explorer<T> {
         }
         self.current_planet_id = planet_id;
         // shared_planet_id is updated in the run() match arm before this call.
-        ExplorerToOrchestrator::MovedToPlanetResult { explorer_id: self.id, planet_id: self.current_planet_id }
+        ExplorerToOrchestrator::MovedToPlanetResult {
+            explorer_id: self.id,
+            planet_id: self.current_planet_id,
+        }
     }
 
     fn handle_current_planet_request(&self) -> ExplorerToOrchestrator<T> {
-        ExplorerToOrchestrator::CurrentPlanetResult { explorer_id: self.id, planet_id: self.current_planet_id }
+        ExplorerToOrchestrator::CurrentPlanetResult {
+            explorer_id: self.id,
+            planet_id: self.current_planet_id,
+        }
     }
 
     fn handle_bag_content_request(&self) -> ExplorerToOrchestrator<T> {
@@ -407,7 +562,9 @@ impl From<BagSummary> for Bag {
 }
 
 impl Default for Bag {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Bag {
@@ -429,25 +586,53 @@ impl Bag {
 
     pub fn insert_basic_resource_in_bag(&mut self, resource: BasicResource) {
         let rt = resource.get_type();
-        self.basic_resources.entry(rt).and_modify(|c| *c += 1).or_insert(1);
-        self.basic_resource_instances.entry(rt).or_default().push(resource);
+        self.basic_resources
+            .entry(rt)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+        self.basic_resource_instances
+            .entry(rt)
+            .or_default()
+            .push(resource);
     }
 
     pub fn insert_complex_resource_in_bag(&mut self, resource: ComplexResource) {
         let rt = resource.get_type();
-        self.complex_resources.entry(rt).and_modify(|c| *c += 1).or_insert(1);
-        self.complex_resource_instances.entry(rt).or_default().push(resource);
+        self.complex_resources
+            .entry(rt)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+        self.complex_resource_instances
+            .entry(rt)
+            .or_default()
+            .push(resource);
     }
 
-    pub fn take_basic_resource(&mut self, resource_type: BasicResourceType) -> Option<BasicResource> {
-        let instance = self.basic_resource_instances.get_mut(&resource_type)?.pop()?;
-        self.basic_resources.entry(resource_type).and_modify(|c| *c -= 1);
+    pub fn take_basic_resource(
+        &mut self,
+        resource_type: BasicResourceType,
+    ) -> Option<BasicResource> {
+        let instance = self
+            .basic_resource_instances
+            .get_mut(&resource_type)?
+            .pop()?;
+        self.basic_resources
+            .entry(resource_type)
+            .and_modify(|c| *c -= 1);
         Some(instance)
     }
 
-    pub fn take_complex_resource(&mut self, resource_type: ComplexResourceType) -> Option<ComplexResource> {
-        let instance = self.complex_resource_instances.get_mut(&resource_type)?.pop()?;
-        self.complex_resources.entry(resource_type).and_modify(|c| *c -= 1);
+    pub fn take_complex_resource(
+        &mut self,
+        resource_type: ComplexResourceType,
+    ) -> Option<ComplexResource> {
+        let instance = self
+            .complex_resource_instances
+            .get_mut(&resource_type)?
+            .pop()?;
+        self.complex_resources
+            .entry(resource_type)
+            .and_modify(|c| *c -= 1);
         Some(instance)
     }
 
@@ -478,13 +663,43 @@ impl Bag {
 
 /// Receive from `planet_receiver`, polling every 100 ms so the AI thread exits
 /// promptly when `ai_running` is set to false. Returns `None` on stop or disconnect.
-fn recv_planet(rx: &Receiver<PlanetToExplorer>, ai_running: &AtomicBool) -> Option<PlanetToExplorer> {
+fn recv_planet(
+    rx: &Receiver<PlanetToExplorer>,
+    ai_running: &AtomicBool,
+) -> Option<PlanetToExplorer> {
     loop {
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(msg) => return Some(msg),
             Err(RecvTimeoutError::Timeout) => {
-                if !ai_running.load(Ordering::SeqCst) { return None; }
+                if !ai_running.load(Ordering::SeqCst) {
+                    return None;
+                }
             }
+            Err(RecvTimeoutError::Disconnected) => return None,
+        }
+    }
+}
+
+/// Receive an AI coordination response without making StopExplorerAI wait for
+/// the full operation timeout. The autonomous thread checks the shared stop
+/// flag at least every 100 ms.
+fn recv_ai_channel<T>(rx: &Receiver<T>, ai_running: &AtomicBool, timeout: Duration) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if !ai_running.load(Ordering::SeqCst) {
+            return None;
+        }
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+
+        let wait = std::cmp::min(remaining, Duration::from_millis(100));
+        match rx.recv_timeout(wait) {
+            Ok(value) => return Some(value),
+            Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return None,
         }
     }
@@ -513,11 +728,11 @@ fn plan_for_with_bag(
     use ComplexResourceType::*;
 
     let steps: &[ComplexResourceType] = match goal {
-        Water     => &[Water],
-        Diamond   => &[Diamond],
-        Life      => &[Water, Life],
-        Dolphin   => &[Water, Life, Water, Dolphin],
-        Robot     => &[Water, Life, Robot],
+        Water => &[Water],
+        Diamond => &[Diamond],
+        Life => &[Water, Life],
+        Dolphin => &[Water, Life, Water, Dolphin],
+        Robot => &[Water, Life, Robot],
         AIPartner => &[Water, Life, Robot, Diamond, AIPartner],
     };
 
@@ -531,11 +746,21 @@ fn plan_for_with_bag(
             *count -= 1;
         } else {
             match step {
-                Water    => { basics_needed.push(Hydrogen); basics_needed.push(Oxygen); }
-                Diamond  => { basics_needed.push(Carbon);   basics_needed.push(Carbon); }
-                Life     => { basics_needed.push(Carbon); }
-                Robot    => { basics_needed.push(Silicon); }
-                Dolphin  => {}
+                Water => {
+                    basics_needed.push(Hydrogen);
+                    basics_needed.push(Oxygen);
+                }
+                Diamond => {
+                    basics_needed.push(Carbon);
+                    basics_needed.push(Carbon);
+                }
+                Life => {
+                    basics_needed.push(Carbon);
+                }
+                Robot => {
+                    basics_needed.push(Silicon);
+                }
+                Dolphin => {}
                 AIPartner => {}
             }
             combination_sequence.push(step);
@@ -543,7 +768,11 @@ fn plan_for_with_bag(
         }
     }
 
-    GoalPlan { goal: Some(goal), basics_needed, combination_sequence }
+    GoalPlan {
+        goal: Some(goal),
+        basics_needed,
+        combination_sequence,
+    }
 }
 
 fn pick_best_goal(
@@ -562,13 +791,23 @@ fn pick_best_goal(
         let mut bag_for_plan = bag_complex.clone();
         bag_for_plan.remove(&goal);
         let plan = plan_for_with_bag(goal, &bag_for_plan);
-        let combos_ok = plan.combination_sequence.iter().all(|c| known_combos.contains(c));
-        if !combos_ok { continue; }
+        let combos_ok = plan
+            .combination_sequence
+            .iter()
+            .all(|c| known_combos.contains(c));
+        if !combos_ok {
+            continue;
+        }
 
         let mut bag_counts = bag_basics.clone();
         let basics_ok = plan.basics_needed.iter().all(|b| {
             let c = bag_counts.entry(*b).or_insert(0);
-            if *c > 0 { *c -= 1; true } else { known_basics.contains(b) }
+            if *c > 0 {
+                *c -= 1;
+                true
+            } else {
+                known_basics.contains(b)
+            }
         });
         if basics_ok {
             if plan.basics_needed.is_empty() && plan.combination_sequence.is_empty() {
@@ -583,10 +822,16 @@ fn pick_best_goal(
         .copied()
         .flat_map(|b| std::iter::repeat_n(b, basic_bag_limit(b) as usize))
         .collect();
-    GoalPlan { goal: None, basics_needed, combination_sequence: vec![] }
+    GoalPlan {
+        goal: None,
+        basics_needed,
+        combination_sequence: vec![],
+    }
 }
 
-fn basic_bag_limit(_: BasicResourceType) -> u32 { 20 }
+fn basic_bag_limit(_: BasicResourceType) -> u32 {
+    20
+}
 
 fn complex_bag_limit(c: ComplexResourceType) -> u32 {
     use ComplexResourceType::*;
@@ -623,7 +868,8 @@ fn autonomous_ai<T: Send + 'static>(
     while ai_running.load(Ordering::SeqCst) {
         match phase {
             Phase::Scout => {
-                let _ = planet_sender.send(ExplorerToPlanet::SupportedResourceRequest { explorer_id: id });
+                let _ = planet_sender
+                    .send(ExplorerToPlanet::SupportedResourceRequest { explorer_id: id });
                 match recv_planet(&planet_receiver, &ai_running) {
                     Some(PlanetToExplorer::SupportedResourceResponse { resource_list }) => {
                         supported_basics = resource_list;
@@ -633,7 +879,8 @@ fn autonomous_ai<T: Send + 'static>(
                 }
                 known_basics.extend(supported_basics.iter().copied());
 
-                let _ = planet_sender.send(ExplorerToPlanet::SupportedCombinationRequest { explorer_id: id });
+                let _ = planet_sender
+                    .send(ExplorerToPlanet::SupportedCombinationRequest { explorer_id: id });
                 match recv_planet(&planet_receiver, &ai_running) {
                     Some(PlanetToExplorer::SupportedCombinationResponse { combination_list }) => {
                         supported_combos = combination_list;
@@ -652,9 +899,12 @@ fn autonomous_ai<T: Send + 'static>(
                 log::info!(
                     "[Explorer #{}] SCOUT planet {}: basics={:?}  combos={:?}  \
                      remaining_basics={:?}  remaining_combos={:?}",
-                    id, current_pid,
-                    supported_basics, supported_combos,
-                    remaining_basics, remaining_combos
+                    id,
+                    current_pid,
+                    supported_basics,
+                    supported_combos,
+                    remaining_basics,
+                    remaining_combos
                 );
 
                 // Resume an in-progress goal rather than re-planning from scratch every visit.
@@ -669,25 +919,44 @@ fn autonomous_ai<T: Send + 'static>(
 
             Phase::Plan => {
                 let bag_lock = bag.lock().unwrap();
-                let bag_basics  = bag_lock.basic_resources.clone();
+                let bag_basics = bag_lock.basic_resources.clone();
                 let bag_complex = bag_lock.complex_resources.clone();
                 drop(bag_lock);
 
-                let plan = pick_best_goal(&supported_basics, &known_combos, &bag_basics, &bag_complex, &known_basics);
+                let plan = pick_best_goal(
+                    &supported_basics,
+                    &known_combos,
+                    &bag_basics,
+                    &bag_complex,
+                    &known_basics,
+                );
 
                 let mut bag_counts = bag_basics.clone();
-                remaining_basics = plan.basics_needed.into_iter().filter(|b| {
-                    let c = bag_counts.entry(*b).or_insert(0);
-                    if *c > 0 { *c -= 1; false } else { true }
-                }).collect();
+                remaining_basics = plan
+                    .basics_needed
+                    .into_iter()
+                    .filter(|b| {
+                        let c = bag_counts.entry(*b).or_insert(0);
+                        if *c > 0 {
+                            *c -= 1;
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
                 remaining_combos = plan.combination_sequence.into_iter().collect();
 
                 log::info!(
                     "[Explorer #{}] PLAN: goal={:?}  need_basics={:?}  combo_seq={:?}  \
                      bag_basics={:?}  bag_complex={:?}  known_combos={:?}",
-                    id, plan.goal,
-                    remaining_basics, remaining_combos,
-                    bag_basics, bag_complex, known_combos
+                    id,
+                    plan.goal,
+                    remaining_basics,
+                    remaining_combos,
+                    bag_basics,
+                    bag_complex,
+                    known_combos
                 );
 
                 phase = Phase::Collect;
@@ -696,23 +965,31 @@ fn autonomous_ai<T: Send + 'static>(
             Phase::Collect => {
                 // Find the first basic this planet can actually generate and rotate it to front.
                 // Basics for other planets stay in the queue for future visits.
-                let pos = remaining_basics.iter().position(|b| supported_basics.contains(b));
+                let pos = remaining_basics
+                    .iter()
+                    .position(|b| supported_basics.contains(b));
                 if let Some(idx) = pos {
                     remaining_basics.rotate_left(idx);
                     let resource = *remaining_basics.front().unwrap();
                     if bag.lock().unwrap().is_basic_full(resource) {
                         log::debug!(
                             "[Explorer #{}] Collect: {:?} bag already full, skipping → Craft",
-                            id, resource
+                            id,
+                            resource
                         );
                         phase = Phase::Craft;
                         continue;
                     }
                     log::debug!(
                         "[Explorer #{}] Collect: requesting {:?}  still_need={:?}",
-                        id, resource, remaining_basics
+                        id,
+                        resource,
+                        remaining_basics
                     );
-                    let _ = planet_sender.send(ExplorerToPlanet::GenerateResourceRequest { explorer_id: id, resource });
+                    let _ = planet_sender.send(ExplorerToPlanet::GenerateResourceRequest {
+                        explorer_id: id,
+                        resource,
+                    });
 
                     match recv_planet(&planet_receiver, &ai_running) {
                         Some(PlanetToExplorer::GenerateResourceResponse { resource: Some(r) }) => {
@@ -773,19 +1050,21 @@ fn autonomous_ai<T: Send + 'static>(
                         phase = Phase::Move;
                     } else if bag.lock().unwrap().is_complex_full(c) {
                         // No room for the output — move before crafting more.
-                        log::info!(
-                            "[Explorer #{}] Craft → Move: bag full for {:?}",
-                            id, c
-                        );
+                        log::info!("[Explorer #{}] Craft → Move: bag full for {:?}", id, c);
                         phase = Phase::Move;
                     } else {
                         let bag_snapshot = {
                             let b = bag.lock().unwrap();
-                            format!("basics={:?} complex={:?}", b.basic_resources, b.complex_resources)
+                            format!(
+                                "basics={:?} complex={:?}",
+                                b.basic_resources, b.complex_resources
+                            )
                         };
                         log::info!(
                             "[Explorer #{}] Craft: attempting {:?}  {}",
-                            id, c, bag_snapshot
+                            id,
+                            c,
+                            bag_snapshot
                         );
                         let req = build_request(&mut bag.lock().unwrap(), c);
                         match req {
@@ -802,16 +1081,28 @@ fn autonomous_ai<T: Send + 'static>(
                                 phase = Phase::Plan;
                             }
                             Some(req) => {
-                                log::debug!("[Explorer #{}] Craft: sending CombineResourceRequest for {:?}", id, c);
-                                let _ = planet_sender.send(ExplorerToPlanet::CombineResourceRequest { explorer_id: id, msg: req });
+                                log::debug!(
+                                    "[Explorer #{}] Craft: sending CombineResourceRequest for {:?}",
+                                    id,
+                                    c
+                                );
+                                let _ =
+                                    planet_sender.send(ExplorerToPlanet::CombineResourceRequest {
+                                        explorer_id: id,
+                                        msg: req,
+                                    });
 
                                 match recv_planet(&planet_receiver, &ai_running) {
-                                    Some(PlanetToExplorer::CombineResourceResponse { complex_response: Ok(r) }) => {
+                                    Some(PlanetToExplorer::CombineResourceResponse {
+                                        complex_response: Ok(r),
+                                    }) => {
                                         player_log!("[Explorer #{}] Crafted {:?}", id, c);
                                         bag.lock().unwrap().insert_complex_resource_in_bag(r);
                                         remaining_combos.pop_front();
                                     }
-                                    Some(PlanetToExplorer::CombineResourceResponse { complex_response: Err((msg, r1, r2)) }) => {
+                                    Some(PlanetToExplorer::CombineResourceResponse {
+                                        complex_response: Err((msg, r1, r2)),
+                                    }) => {
                                         log::warn!(
                                             "[Explorer #{}] Craft: planet rejected {:?}: {}  → Move",
                                             id, c, msg
@@ -823,14 +1114,21 @@ fn autonomous_ai<T: Send + 'static>(
                                     }
                                     None => break,
                                     Some(_) => {
-                                        log::error!("[Explorer #{}] Craft: unexpected response for {:?}", id, c);
+                                        log::error!(
+                                            "[Explorer #{}] Craft: unexpected response for {:?}",
+                                            id,
+                                            c
+                                        );
                                     }
                                 }
                             }
                         }
                     }
                 } else {
-                    log::debug!("[Explorer #{}] Craft → Move: no more combos in sequence", id);
+                    log::debug!(
+                        "[Explorer #{}] Craft → Move: no more combos in sequence",
+                        id
+                    );
                     phase = Phase::Move;
                 }
             }
@@ -845,8 +1143,8 @@ fn autonomous_ai<T: Send + 'static>(
                     current_planet_id: current,
                 });
 
-                match neighbors_rx.recv_timeout(Duration::from_secs(5)) {
-                    Ok(neighbors) if !neighbors.is_empty() => {
+                match recv_ai_channel(&neighbors_rx, &ai_running, Duration::from_secs(5)) {
+                    Some(neighbors) if !neighbors.is_empty() => {
                         // Goal-directed: if we have pending combo work, prefer a neighbor
                         // that is known to support the needed combo type directly.
                         let (dst, move_reason) = if !remaining_basics.is_empty() {
@@ -854,7 +1152,10 @@ fn autonomous_ai<T: Send + 'static>(
                             let cnt = visit_count.entry(current).or_insert(0);
                             let i = *cnt % neighbors.len();
                             *cnt += 1;
-                            (neighbors[i], format!("round-robin (need basics {:?})", remaining_basics))
+                            (
+                                neighbors[i],
+                                format!("round-robin (need basics {:?})", remaining_basics),
+                            )
                         } else if let Some(&needed_combo) = remaining_combos.front() {
                             let combo_neighbor = neighbors.iter().copied().find(|n| {
                                 combo_planet_map
@@ -862,12 +1163,21 @@ fn autonomous_ai<T: Send + 'static>(
                                     .is_some_and(|s| s.contains(n))
                             });
                             if let Some(n) = combo_neighbor {
-                                (n, format!("goal-directed → {:?} at planet {}", needed_combo, n))
+                                (
+                                    n,
+                                    format!("goal-directed → {:?} at planet {}", needed_combo, n),
+                                )
                             } else {
                                 let cnt = visit_count.entry(current).or_insert(0);
                                 let i = *cnt % neighbors.len();
                                 *cnt += 1;
-                                (neighbors[i], format!("round-robin (no known neighbor for {:?})", needed_combo))
+                                (
+                                    neighbors[i],
+                                    format!(
+                                        "round-robin (no known neighbor for {:?})",
+                                        needed_combo
+                                    ),
+                                )
                             }
                         } else {
                             let cnt = visit_count.entry(current).or_insert(0);
@@ -879,70 +1189,84 @@ fn autonomous_ai<T: Send + 'static>(
                         log::info!(
                             "[Explorer #{}] MOVE: planet {} → {}  reason={}  \
                              remaining_basics={:?}  remaining_combos={:?}",
-                            id, current, dst, move_reason,
-                            remaining_basics, remaining_combos
+                            id,
+                            current,
+                            dst,
+                            move_reason,
+                            remaining_basics,
+                            remaining_combos
                         );
 
                         // Drain stale move confirmations.
                         while planet_rx.try_recv().is_ok() {}
 
-                        let _ = orchestrator_sender.send(ExplorerToOrchestrator::TravelToPlanetRequest {
-                            explorer_id: id,
-                            current_planet_id: current,
-                            dst_planet_id: dst,
-                        });
+                        let _ = orchestrator_sender.send(
+                            ExplorerToOrchestrator::TravelToPlanetRequest {
+                                explorer_id: id,
+                                current_planet_id: current,
+                                dst_planet_id: dst,
+                            },
+                        );
 
-                        match planet_rx.recv_timeout(Duration::from_secs(5)) {
-                            Ok(Some(new_sender)) => {
+                        match recv_ai_channel(&planet_rx, &ai_running, Duration::from_secs(5)) {
+                            Some(Some(new_sender)) => {
                                 planet_sender = new_sender;
                                 player_log!("[Explorer #{}] Moved to planet {}", id, dst);
                             }
-                            Ok(None) => {
-                                log::debug!("[Explorer #{}] Move to planet {} was declined", id, dst);
+                            Some(None) => {
+                                log::debug!(
+                                    "[Explorer #{}] Move to planet {} was declined",
+                                    id,
+                                    dst
+                                );
                             }
-                            Err(_) => {
+                            None if !ai_running.load(Ordering::SeqCst) => break,
+                            None => {
                                 log::warn!("[Explorer #{}] Move to planet {} timed out", id, dst);
                             }
                         }
                     }
-                    Ok(_) => {
-                        log::debug!("[Explorer #{}] No neighbors — staying on planet {}", id, current);
+                    Some(_) => {
+                        log::debug!(
+                            "[Explorer #{}] No neighbors — staying on planet {}",
+                            id,
+                            current
+                        );
                     }
-                    Err(_) => {
+                    None if !ai_running.load(Ordering::SeqCst) => break,
+                    None => {
                         log::warn!("[Explorer #{}] Neighbors request timed out", id);
                     }
                 }
 
                 phase = Phase::Scout;
             }
-
         }
     }
 }
-
 
 fn build_request(bag: &mut Bag, combo: ComplexResourceType) -> Option<ComplexResourceRequest> {
     use BasicResourceType::*;
     use ComplexResourceType::*;
 
     match combo {
-        Water    => Some(ComplexResourceRequest::Water(
+        Water => Some(ComplexResourceRequest::Water(
             bag.take_basic_resource(Hydrogen)?.to_hydrogen().ok()?,
             bag.take_basic_resource(Oxygen)?.to_oxygen().ok()?,
         )),
-        Diamond  => Some(ComplexResourceRequest::Diamond(
+        Diamond => Some(ComplexResourceRequest::Diamond(
             bag.take_basic_resource(Carbon)?.to_carbon().ok()?,
             bag.take_basic_resource(Carbon)?.to_carbon().ok()?,
         )),
-        Life     => Some(ComplexResourceRequest::Life(
+        Life => Some(ComplexResourceRequest::Life(
             bag.take_complex_resource(Water)?.to_water().ok()?,
             bag.take_basic_resource(Carbon)?.to_carbon().ok()?,
         )),
-        Robot    => Some(ComplexResourceRequest::Robot(
+        Robot => Some(ComplexResourceRequest::Robot(
             bag.take_basic_resource(Silicon)?.to_silicon().ok()?,
             bag.take_complex_resource(Life)?.to_life().ok()?,
         )),
-        Dolphin  => Some(ComplexResourceRequest::Dolphin(
+        Dolphin => Some(ComplexResourceRequest::Dolphin(
             bag.take_complex_resource(Water)?.to_water().ok()?,
             bag.take_complex_resource(Life)?.to_life().ok()?,
         )),

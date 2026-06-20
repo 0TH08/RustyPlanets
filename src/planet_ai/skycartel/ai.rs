@@ -72,8 +72,6 @@ fn charge_prefer_resource_cells(state: &mut PlanetState, sunray: Sunray) {
     if let Some(i) = first_in_range(resource_end..total, |idx| !state.cell(idx).is_charged()) {
         state.cell_mut(i).charge(sunray);
     }
-
-
 }
 
 pub struct SkycartelPlanetAI {
@@ -98,7 +96,7 @@ impl SkycartelPlanetAI {
             s.record_generation(r);
         }
     }
-    
+
     fn sync_cells(&mut self, state: &PlanetState) {
         if let Ok(mut s) = self.inner.lock() {
             let total = state.cells_count();
@@ -142,7 +140,8 @@ impl PlanetAI for SkycartelPlanetAI {
             EventType::MessageOrchestratorToPlanet,
             Channel::Debug,
             Payload::from([("action".to_string(), "sunray_charged".to_string())]),
-        ).emit();
+        )
+        .emit();
     }
 
     fn handle_explorer_msg(
@@ -185,7 +184,8 @@ impl PlanetAI for SkycartelPlanetAI {
                             ("action".to_string(), "generate_unsupported".to_string()),
                             ("resource".to_string(), format!("{:?}", resource)),
                         ]),
-                    ).emit();
+                    )
+                    .emit();
                     return Some(PlanetToExplorer::GenerateResourceResponse { resource: None });
                 }
 
@@ -204,7 +204,8 @@ impl PlanetAI for SkycartelPlanetAI {
                             ("action".to_string(), "generate_no_charge".to_string()),
                             ("resource".to_string(), format!("{:?}", resource)),
                         ]),
-                    ).emit();
+                    )
+                    .emit();
                     return Some(PlanetToExplorer::GenerateResourceResponse { resource: None });
                 };
 
@@ -223,7 +224,8 @@ impl PlanetAI for SkycartelPlanetAI {
                                 ("action".to_string(), "generate_success".to_string()),
                                 ("resource".to_string(), format!("{:?}", resource)),
                             ]),
-                        ).emit();
+                        )
+                        .emit();
                         Some(PlanetToExplorer::GenerateResourceResponse {
                             resource: Some(basic),
                         })
@@ -239,7 +241,8 @@ impl PlanetAI for SkycartelPlanetAI {
                                 ("action".to_string(), "generate_failed".to_string()),
                                 ("resource".to_string(), format!("{:?}", resource)),
                             ]),
-                        ).emit();
+                        )
+                        .emit();
                         Some(PlanetToExplorer::GenerateResourceResponse { resource: None })
                     }
                 }
@@ -276,7 +279,8 @@ impl PlanetAI for SkycartelPlanetAI {
                 EventType::InternalPlanetAction,
                 Channel::Warning,
                 Payload::from([("action".to_string(), "asteroid_no_charge".to_string())]),
-            ).emit();
+            )
+            .emit();
             self.record_error();
             return None;
         };
@@ -291,7 +295,8 @@ impl PlanetAI for SkycartelPlanetAI {
                 EventType::InternalPlanetAction,
                 Channel::Info,
                 Payload::from([("action".to_string(), "asteroid_deflected".to_string())]),
-            ).emit();
+            )
+            .emit();
             state.take_rocket()
         } else {
             self.record_error();
@@ -301,7 +306,8 @@ impl PlanetAI for SkycartelPlanetAI {
                 EventType::InternalPlanetAction,
                 Channel::Error,
                 Payload::from([("action".to_string(), "rocket_build_failed".to_string())]),
-            ).emit();
+            )
+            .emit();
             None
         }
     }
@@ -339,33 +345,25 @@ impl PlanetAI for SkycartelPlanetAI {
         }
     }
 
-    fn on_start(
-        &mut self,
-        state: &PlanetState,
-        _generator: &Generator,
-        _combinator: &Combinator,
-    ) {
+    fn on_start(&mut self, state: &PlanetState, _generator: &Generator, _combinator: &Combinator) {
         LogEvent::new(
             Some(Participant::new(ActorType::Planet, state.id())),
             Some(Participant::new(ActorType::Orchestrator, 0u32)),
             EventType::InternalPlanetAction,
             Channel::Info,
             Payload::from([("action".to_string(), "planet_ai_started".to_string())]),
-        ).emit();
+        )
+        .emit();
     }
 
-    fn on_stop(
-        &mut self,
-        state: &PlanetState,
-        _generator: &Generator,
-        _combinator: &Combinator,
-    ) {
+    fn on_stop(&mut self, state: &PlanetState, _generator: &Generator, _combinator: &Combinator) {
         LogEvent::new(
             Some(Participant::new(ActorType::Planet, state.id())),
             Some(Participant::new(ActorType::Orchestrator, 0u32)),
             EventType::InternalPlanetAction,
             Channel::Info,
             Payload::from([("action".to_string(), "planet_ai_stopped".to_string())]),
-        ).emit();
+        )
+        .emit();
     }
 }

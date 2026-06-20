@@ -5,9 +5,9 @@
 mod tests {
     use crossbeam_channel::unbounded;
 
+    use crate::PlanetType;
     use common_game::protocols::orchestrator_planet::{OrchestratorToPlanet, PlanetToOrchestrator};
     use common_game::protocols::planet_explorer::ExplorerToPlanet;
-    use crate::PlanetType;
 
     #[test]
     fn skycartel_create_planet_smoke() {

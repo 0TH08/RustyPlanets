@@ -18,13 +18,13 @@
 //! - Individual planet states use dynamic dispatch via `PlanetTelemetry` trait
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use crate::planet_telemetry::{CommonPlanetSnapshot, PlanetTelemetry};
 use crate::explorer::Bag;
+use crate::planet_telemetry::{CommonPlanetSnapshot, PlanetTelemetry};
 
 // ── PlanetKind enum ─────────────────────────────────────────────────
 
@@ -99,7 +99,8 @@ impl SimStatus {
     }
 
     pub fn set_speed(&self, speed: f32) {
-        self.speed.store(f32::to_bits(speed) as u64, Ordering::SeqCst);
+        self.speed
+            .store(f32::to_bits(speed) as u64, Ordering::SeqCst);
     }
 
     pub fn is_idle(&self) -> bool {
@@ -214,7 +215,10 @@ impl TelemetryHub {
     }
 
     pub fn update_explorer_planet(&self, explorer_id: u32, planet_id: u32) {
-        self.explorer_planet.write().unwrap().insert(explorer_id, planet_id);
+        self.explorer_planet
+            .write()
+            .unwrap()
+            .insert(explorer_id, planet_id);
     }
 
     pub fn set_speed(&self, speed: f32) {

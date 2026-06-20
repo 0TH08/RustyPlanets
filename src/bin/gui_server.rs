@@ -14,8 +14,8 @@ use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
-use skycartel::telemetry::{TelemetryHub, RunState, PlanetKind};
 use skycartel::broadcast_log::LogEntry;
+use skycartel::telemetry::{PlanetKind, RunState, TelemetryHub};
 
 // ── Shared app state ─────────────────────────────────────────────────────────
 // Note: Some fields will be populated by the integration binary.
@@ -103,7 +103,11 @@ async fn main() {
         }
     };
 
-    let state = AppState { telemetry, step_tx, log_tx };
+    let state = AppState {
+        telemetry,
+        step_tx,
+        log_tx,
+    };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -120,7 +124,7 @@ async fn main() {
         .route("/ws/logs", get(logs_ws_upgrade))
         .fallback_service(
             ServeDir::new("rustyplanet-gui/dist")
-                .fallback(ServeFile::new("rustyplanet-gui/dist/index.html"))
+                .fallback(ServeFile::new("rustyplanet-gui/dist/index.html")),
         )
         .with_state(state)
         .layer(cors);
@@ -129,7 +133,9 @@ async fn main() {
     println!("Skycartel GUI server listening on http://{}", addr);
 
     axum::serve(
-        tokio::net::TcpListener::bind(addr).await.expect("bind failed"),
+        tokio::net::TcpListener::bind(addr)
+            .await
+            .expect("bind failed"),
         app,
     )
     .await
@@ -155,16 +161,19 @@ async fn set_run_state(
 
     match body.run_state {
         ApiRunState::Running => {
-            sim.run_state.store(true, std::sync::atomic::Ordering::SeqCst);
+            sim.run_state
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             if let Some(ref tx) = state.step_tx {
                 let _ = tx.try_send(());
             }
         }
         ApiRunState::Paused => {
-            sim.run_state.store(false, std::sync::atomic::Ordering::SeqCst);
+            sim.run_state
+                .store(false, std::sync::atomic::Ordering::SeqCst);
         }
         ApiRunState::Idle => {
-            sim.run_state.store(false, std::sync::atomic::Ordering::SeqCst);
+            sim.run_state
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             sim.set_tick(0);
         }
     }
@@ -181,7 +190,8 @@ async fn step_simulation(State(state): State<AppState>) -> Json<ApiSimStatus> {
         let _ = tx.try_send(());
     }
     let sim = &state.telemetry.sim_status;
-    sim.run_state.store(true, std::sync::atomic::Ordering::SeqCst);
+    sim.run_state
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 
     Json(ApiSimStatus {
         run_state: to_api_run_state(sim.to_api_state()),
@@ -204,25 +214,25 @@ async fn set_speed(
 }
 
 async fn list_planets(State(state): State<AppState>) -> Json<Vec<PlanetSummary>> {
-        let planets = state.telemetry.planets.read().unwrap();
-        let summaries: Vec<PlanetSummary> = planets
-            .iter()
-            .map(|(id, entry)| {
-                let snap = entry.snapshot();
-                PlanetSummary {
-                    id: *id,
-                    name: snap.name,
-                    kind: snap.kind,
-                    ai_running: snap.ai_running,
-                    explorer_count: snap.explorer_count,
-                    total_resources_generated: snap.stats.total_resources_generated,
-                    rockets_built: snap.stats.rockets_built,
-                    asteroids_deflected: snap.stats.asteroids_deflected,
-                    errors_encountered: snap.stats.errors_encountered,
-                }
-            })
-            .collect();
-        Json(summaries)
+    let planets = state.telemetry.planets.read().unwrap();
+    let summaries: Vec<PlanetSummary> = planets
+        .iter()
+        .map(|(id, entry)| {
+            let snap = entry.snapshot();
+            PlanetSummary {
+                id: *id,
+                name: snap.name,
+                kind: snap.kind,
+                ai_running: snap.ai_running,
+                explorer_count: snap.explorer_count,
+                total_resources_generated: snap.stats.total_resources_generated,
+                rockets_built: snap.stats.rockets_built,
+                asteroids_deflected: snap.stats.asteroids_deflected,
+                errors_encountered: snap.stats.errors_encountered,
+            }
+        })
+        .collect();
+    Json(summaries)
 }
 
 async fn get_planet(
@@ -232,18 +242,18 @@ async fn get_planet(
     let planets = state.telemetry.planets.read().unwrap();
     if let Some(entry) = planets.get(&id) {
         let snap = entry.snapshot();
-            let details = PlanetDetails {
-                summary: PlanetSummary {
-                    id,
-                    name: snap.name,
-                    kind: snap.kind,
-                    ai_running: snap.ai_running,
-                    explorer_count: snap.explorer_count,
-                    total_resources_generated: snap.stats.total_resources_generated,
-                    rockets_built: snap.stats.rockets_built,
-                    asteroids_deflected: snap.stats.asteroids_deflected,
-                    errors_encountered: snap.stats.errors_encountered,
-                },
+        let details = PlanetDetails {
+            summary: PlanetSummary {
+                id,
+                name: snap.name,
+                kind: snap.kind,
+                ai_running: snap.ai_running,
+                explorer_count: snap.explorer_count,
+                total_resources_generated: snap.stats.total_resources_generated,
+                rockets_built: snap.stats.rockets_built,
+                asteroids_deflected: snap.stats.asteroids_deflected,
+                errors_encountered: snap.stats.errors_encountered,
+            },
             explorer_arrivals: snap.stats.explorer_arrivals,
             explorer_departures: snap.stats.explorer_departures,
         };
